@@ -1,10 +1,10 @@
-# Vibecraft - Technical Documentation
+# Boxcraft - Technical Documentation
 
-This document explains the Vibecraft codebase for future AI assistants working on this project.
+This document explains the Boxcraft codebase for future AI assistants working on this project.
 
 ## Project Purpose
 
-Vibecraft visualizes Claude Code's activity in real-time as a 3D workshop. When Claude uses tools (Read, Edit, Bash, etc.), a character moves to corresponding workstations in a Three.js scene. The user can also send prompts to Claude from the browser via tmux integration.
+Boxcraft visualizes Claude Code's activity in real-time as a 3D workshop. When Claude uses tools (Read, Edit, Bash, etc.), a character moves to corresponding workstations in a Three.js scene. The user can also send prompts to Claude from the browser via tmux integration.
 
 ## Architecture Overview
 
@@ -17,12 +17,12 @@ Claude Code → Hook Script → WebSocket Server → Browser (Three.js)
 ### Data Flow
 
 1. **Claude Code** executes tools (Read, Edit, Bash, etc.)
-2. **Hook script** (`hooks/vibecraft-hook.sh`) receives JSON via stdin from Claude Code's hook system
-3. Hook writes to `~/.vibecraft/data/events.jsonl` AND POSTs to `http://localhost:4003/event`
+2. **Hook script** (`hooks/boxcraft-hook.sh`) receives JSON via stdin from Claude Code's hook system
+3. Hook writes to `~/.boxcraft/data/events.jsonl` AND POSTs to `http://localhost:4003/event`
 4. **WebSocket server** (`server/index.ts`) broadcasts events to connected clients
 5. **Browser** (`src/main.ts`) receives events and moves the Claude character
 
-**Important:** Both hook and server use `~/.vibecraft/data/` as the data directory. This ensures they share the same files regardless of how vibecraft was installed (npx, global npm, or local dev).
+**Important:** Both hook and server use `~/.boxcraft/data/` as the data directory. This ensures they share the same files regardless of how boxcraft was installed (npx, global npm, or local dev).
 
 ### EventBus Architecture
 
@@ -92,13 +92,13 @@ Defines all TypeScript types used across server and client:
 
 **Important**: When adding new tools, update `TOOL_STATION_MAP` to assign them to stations.
 
-### `hooks/vibecraft-hook.sh`
-Bash script that captures Claude Code events. The source lives in `hooks/vibecraft-hook.sh` but `npx vibecraft setup` copies it to `~/.vibecraft/hooks/vibecraft-hook.sh` (stable location).
+### `hooks/boxcraft-hook.sh`
+Bash script that captures Claude Code events. The source lives in `hooks/boxcraft-hook.sh` but `npx boxcraft setup` copies it to `~/.boxcraft/hooks/boxcraft-hook.sh` (stable location).
 
 **What it does:**
 - Reads JSON from stdin (Claude Code pipes hook data)
 - Transforms to our event format with `jq`
-- Writes to `~/.vibecraft/data/events.jsonl` (append-only log)
+- Writes to `~/.boxcraft/data/events.jsonl` (append-only log)
 - POSTs to server for real-time updates
 
 **Cross-platform support:**
@@ -110,17 +110,17 @@ Bash script that captures Claude Code events. The source lives in `hooks/vibecra
 
 **Compact JSON**: Must use `jq -n -c` (not just `jq -n`) to avoid multi-line output breaking JSONL format.
 
-### Setup Process (`npx vibecraft setup`)
+### Setup Process (`npx boxcraft setup`)
 
 The setup command:
-1. Copies `hooks/vibecraft-hook.sh` to `~/.vibecraft/hooks/vibecraft-hook.sh`
-2. Creates `~/.vibecraft/data/` directory
+1. Copies `hooks/boxcraft-hook.sh` to `~/.boxcraft/hooks/boxcraft-hook.sh`
+2. Creates `~/.boxcraft/data/` directory
 3. Configures all 8 hooks in `~/.claude/settings.json`:
    - PreToolUse, PostToolUse, Stop, SubagentStop
    - SessionStart, SessionEnd, UserPromptSubmit, Notification
 4. Backs up existing settings
 
-**Why ~/.vibecraft/hooks/?** The hook path must be stable. If hooks pointed to the npm package location, they'd break when the package updates or npx cache clears.
+**Why ~/.boxcraft/hooks/?** The hook path must be stable. If hooks pointed to the npm package location, they'd break when the package updates or npx cache clears.
 
 ### `server/index.ts`
 Node.js WebSocket server:
@@ -419,7 +419,7 @@ TOOL_STATION_MAP = {
 
 ### Debugging events
 1. Check `data/events.jsonl` for raw events
-2. Enable debug: `VIBECRAFT_DEBUG=true npm run dev:server`
+2. Enable debug: `BOXCRAFT_DEBUG=true npm run dev:server`
 3. Browser console shows event client logs
 
 ### Performance issues
@@ -437,8 +437,8 @@ All default values are defined in **`shared/defaults.ts`** - the single source o
 export const DEFAULTS = {
   SERVER_PORT: 4003,              // WebSocket/API server
   CLIENT_PORT: 4002,              // Vite dev server
-  EVENTS_FILE: '~/.vibecraft/data/events.jsonl',
-  SESSIONS_FILE: '~/.vibecraft/data/sessions.json',
+  EVENTS_FILE: '~/.boxcraft/data/events.jsonl',
+  SESSIONS_FILE: '~/.boxcraft/data/sessions.json',
   MAX_EVENTS: 1000,
   TMUX_SESSION: 'claude',
 }
@@ -449,17 +449,17 @@ This file is imported by:
 - `vite.config.ts` - Dev server and build-time injection
 - Frontend gets the port via Vite's `define` at build time
 
-**Note**: The bash hook (`hooks/vibecraft-hook.sh`) also uses `~/.vibecraft/data/` by default, ensuring both hook and server share the same data directory.
+**Note**: The bash hook (`hooks/boxcraft-hook.sh`) also uses `~/.boxcraft/data/` by default, ensuring both hook and server share the same data directory.
 
 ### Data Directory
 
-Vibecraft stores all data in `~/.vibecraft/data/`:
+Boxcraft stores all data in `~/.boxcraft/data/`:
 - `events.jsonl` - Event log (append-only)
 - `sessions.json` - Session persistence
 - `tiles.json` - Text tile labels
 - `pending-prompt.txt` - Queued prompt (optional)
 
-This location is used regardless of how vibecraft was installed (npx cache, global npm, or local dev), which fixes issues where hook and server ran from different installation directories.
+This location is used regardless of how boxcraft was installed (npx cache, global npm, or local dev), which fixes issues where hook and server ran from different installation directories.
 
 ## Persistence Architecture
 
@@ -474,7 +474,7 @@ See **[docs/STORAGE.md](docs/STORAGE.md)** for complete documentation of:
 | Storage | Used For | Examples |
 |---------|----------|----------|
 | localStorage | User preferences, offline content | Volume, keybinds, hex art |
-| Server files (`~/.vibecraft/data/`) | Shared state, server-managed data | Sessions, text tiles, events |
+| Server files (`~/.boxcraft/data/`) | Shared state, server-managed data | Sessions, text tiles, events |
 
 ### Environment Variables
 
@@ -482,13 +482,13 @@ Environment variables override the defaults:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `VIBECRAFT_PORT` | 4003 | WebSocket/API server port |
-| `VIBECRAFT_CLIENT_PORT` | 4002 | Vite dev server port |
-| `VIBECRAFT_EVENTS_FILE` | ~/.vibecraft/data/events.jsonl | Event log path |
-| `VIBECRAFT_DEBUG` | false | Enable verbose logging |
-| `VIBECRAFT_TMUX_SESSION` | claude | tmux session for prompt injection |
-| `VIBECRAFT_SESSIONS_FILE` | ~/.vibecraft/data/sessions.json | Session persistence file |
-| `VIBECRAFT_DATA_DIR` | ~/.vibecraft/data | Hook data directory |
+| `BOXCRAFT_PORT` | 4003 | WebSocket/API server port |
+| `BOXCRAFT_CLIENT_PORT` | 4002 | Vite dev server port |
+| `BOXCRAFT_EVENTS_FILE` | ~/.boxcraft/data/events.jsonl | Event log path |
+| `BOXCRAFT_DEBUG` | false | Enable verbose logging |
+| `BOXCRAFT_TMUX_SESSION` | claude | tmux session for prompt injection |
+| `BOXCRAFT_SESSIONS_FILE` | ~/.boxcraft/data/sessions.json | Session persistence file |
+| `BOXCRAFT_DATA_DIR` | ~/.boxcraft/data | Hook data directory |
 | `DEEPGRAM_API_KEY` | (none) | Deepgram API key for voice input |
 
 A `.env` file is included with defaults - just run `npm run dev`.
@@ -582,7 +582,7 @@ Client rebuilds its local `claudeToManagedLink` map from server data on every `s
 - **Text label modal**: Custom themed textarea replaces browser prompt() for tile labels
 - **Multi-line text tiles**: Word wrapping and hex-styled beveled backgrounds
 - **Voice transcript streaming**: Real-time transcription streams to prompt input
-- **Hosted voice mode**: Cloud proxy support for vibecraft.sh deployment
+- **Hosted voice mode**: Cloud proxy support for boxcraft.sh deployment
 - **Spatial audio**: Distance-based volume and stereo panning for zone-aware sound effects
 - **Context-aware Ctrl+C**: Copy when text selected, interrupt working session otherwise
 - **Toast notifications**: Reusable toast system for user feedback (info, success, warning, error)
@@ -765,12 +765,12 @@ Extended keybinds (QWERTY, ASDFGH, ZXCVBN) work but are not displayed in the UI.
 ### CLI Commands
 
 ```bash
-vibecraft                 # Start server (uses compiled JS)
-vibecraft setup           # Install hook to ~/.vibecraft/hooks/, configure all 8 hooks
-vibecraft --port 4000     # Custom port
-vibecraft --hook-path     # Print path to source hook script (in package)
-vibecraft --help          # Show help
-vibecraft --version       # Show version
+boxcraft                 # Start server (uses compiled JS)
+boxcraft setup           # Install hook to ~/.boxcraft/hooks/, configure all 8 hooks
+boxcraft --port 4000     # Custom port
+boxcraft --hook-path     # Print path to source hook script (in package)
+boxcraft --help          # Show help
+boxcraft --version       # Show version
 ```
 
 ### Publishing to npm
@@ -784,8 +784,8 @@ npm publish
 
 Users can then run:
 ```bash
-npx vibecraft setup
-npx vibecraft
+npx boxcraft setup
+npx boxcraft
 ```
 
 ### TypeScript Compilation

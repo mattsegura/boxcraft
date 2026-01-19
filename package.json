@@ -1,12 +1,12 @@
 {
-  "name": "vibecraft",
+  "name": "boxcraft",
   "version": "0.1.15",
   "description": "3D visualization of Claude Code as an interactive workshop",
   "author": "nearcyan",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nearcyan/vibecraft"
+    "url": "https://github.com/mattsegura/boxcraft"
   },
   "keywords": [
     "claude",
@@ -19,7 +19,7 @@
   ],
   "type": "module",
   "bin": {
-    "vibecraft": "./bin/cli.js"
+    "boxcraft": "./bin/cli.js"
   },
   "files": [
     "bin/",

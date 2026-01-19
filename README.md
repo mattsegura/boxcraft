@@ -1,18 +1,47 @@
-# Vibecraft
+# Boxcraft
 
-![Vibecraft Screenshot](public/og-image.png)
+![Boxcraft Screenshot](public/og-image.png)
 
 Manage Claude Code in style!
 
-**[Try it instantly at vibecraft.sh](https://vibecraft.sh)** — still connects to your local Claude Code instances!
+**[Try it instantly at boxcraft.sh](https://boxcraft.sh)** — still connects to your local Claude Code instances!
 
 **New:**
+- **Blackbox AI Integration** — Run cloud AI agents (Claude, GPT, Gemini) without local setup!
 - **Spatial Audio** — Claude behind you? Claude on your left? No claublem!
 - **Animations** — What's Claude up to? Watch him! ◕ ‿ ◕
 
-Vibecraft uses your own local Claude Code instances — no files or prompts are shared.
+Boxcraft uses your own local Claude Code instances — no files or prompts are shared.
 
-![Three.js](https://img.shields.io/badge/Three.js-black?logo=threedotjs) ![TypeScript](https://img.shields.io/badge/TypeScript-blue?logo=typescript&logoColor=white) ![npm](https://img.shields.io/npm/v/vibecraft)
+![Three.js](https://img.shields.io/badge/Three.js-black?logo=threedotjs) ![TypeScript](https://img.shields.io/badge/TypeScript-blue?logo=typescript&logoColor=white) ![npm](https://img.shields.io/npm/v/boxcraft)
+
+## How It Works
+
+Boxcraft visualizes AI coding agents in real-time as a 3D workshop. When an agent uses tools (Read, Edit, Bash, etc.), a character moves to corresponding workstations.
+
+```
+┌─────────────────┐                    ┌─────────────────┐
+│  Claude Code    │ ──── hooks ────→   │  Boxcraft       │
+│  (local CLI)    │                    │  Server (:4003) │
+└─────────────────┘                    └────────┬────────┘
+                                                │
+┌─────────────────┐                             │ WebSocket
+│  Blackbox AI    │ ──── API ──────→           │
+│  (cloud agents) │                             ▼
+└─────────────────┘                    ┌─────────────────┐
+                                       │  Browser        │
+                                       │  (3D Workshop)  │
+                                       └─────────────────┘
+```
+
+### Two Ways to Use Boxcraft
+
+| Mode | Setup | Best For |
+|------|-------|----------|
+| **Local** (Claude Code) | Install hooks, run in tmux | Full control, offline work |
+| **Cloud** (Blackbox AI) | Just add API key | Quick tasks, multi-agent, no local setup |
+
+See [docs/BLACKBOX.md](docs/BLACKBOX.md) for the Blackbox AI integration guide.
 
 ## Requirements
 
@@ -29,22 +58,22 @@ brew install jq tmux       # macOS
 # sudo apt install jq tmux  # Ubuntu/Debian
 
 # 2. Configure hooks (one time)
-npx vibecraft setup
+npx boxcraft setup
 
 # 3. Start server
-npx vibecraft
+npx boxcraft
 ```
 
 Open http://localhost:4003 and use Claude Code normally. You'll see Claude move around the workshop as it uses tools.
 
 **From source:**
 ```bash
-git clone https://github.com/nearcyan/vibecraft
-cd vibecraft && npm install && npm run dev
+git clone https://github.com/nearcyan/boxcraft
+cd boxcraft && npm install && npm run dev
 # Opens on http://localhost:4002
 ```
 
-**To uninstall:** `npx vibecraft uninstall` (removes hooks, keeps your data)
+**To uninstall:** `npx boxcraft uninstall` (removes hooks, keeps your data)
 
 ## Browser Control (Optional)
 
@@ -102,6 +131,24 @@ Each session runs in its own tmux, with status tracking (idle/working/offline).
 
 See [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) for the full API and architecture.
 
+## Blackbox AI Integration
+
+Run cloud-based AI agents without any local Claude Code installation:
+
+1. Get your API key from [cloud.blackbox.ai](https://cloud.blackbox.ai) (Profile → BLACKBOX API Token)
+2. Add to `.env`: `BLACKBOX_API_KEY=bb_your_key_here`
+3. Start Boxcraft and create a new session with a GitHub repo URL
+
+**Available Agents:**
+- **Blackbox** — Blackbox Pro, Claude, GPT-5, Gemini models
+- **Claude** — Claude Sonnet 4.5, Sonnet 4, Opus 4
+- **Codex** — GPT-5 Codex, GPT-5, GPT-4.1
+- **Gemini** — Gemini 2.5 Pro, 2.5 Flash, 2.0 Flash
+
+**Multi-Agent Mode:** Run 2-5 agents on the same task — Blackbox automatically compares results and picks the best implementation!
+
+See [docs/BLACKBOX.md](docs/BLACKBOX.md) for the complete integration guide.
+
 ## Keyboard Shortcuts
 
 | Key | Action |
@@ -120,7 +167,7 @@ See [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) for the full API and architec
 ## CLI Options
 
 ```bash
-vibecraft [options]
+boxcraft [options]
 
 Options:
   --port, -p <port>    WebSocket server port (default: 4003)
@@ -128,10 +175,17 @@ Options:
   --version, -v        Show version
 ```
 
-See [docs/SETUP.md](docs/SETUP.md) for detailed setup guide.
-See [CLAUDE.md](CLAUDE.md) for technical documentation.
+## Documentation
 
-Website: https://vibecraft.sh
+| Doc | Description |
+|-----|-------------|
+| [docs/SETUP.md](docs/SETUP.md) | Detailed setup guide |
+| [docs/BLACKBOX.md](docs/BLACKBOX.md) | Blackbox AI integration |
+| [docs/ORCHESTRATION.md](docs/ORCHESTRATION.md) | Multi-session API |
+| [docs/SOUND.md](docs/SOUND.md) | Sound system |
+| [CLAUDE.md](CLAUDE.md) | Technical documentation |
+
+Website: https://boxcraft.sh
 
 ## License
 

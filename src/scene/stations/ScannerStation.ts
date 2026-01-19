@@ -7,7 +7,7 @@ import * as THREE from 'three'
 export function addScannerDetails(group: THREE.Group): void {
   // Magnifying glass handle
   const handleMaterial = new THREE.MeshStandardMaterial({
-    color: 0x4a5a6a,  // Blue-gray
+    color: 0x1f1f1f,  // Dark gray for ASCII theme
     roughness: 0.5,
     metalness: 0.4,
   })

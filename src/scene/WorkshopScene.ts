@@ -66,20 +66,31 @@ export interface Zone {
   edgeLines?: THREE.LineSegments
   // Solid side faces (shown when elevated)
   sideMesh?: THREE.Mesh
+  // Task progress (0-100) for Blackbox tasks
+  taskProgress?: number
+  // Progress ring mesh
+  progressRing?: THREE.Mesh
+  // Batch ID for multi-agent comparison
+  batchId?: string
+  // Whether this zone is the winner of a judge comparison
+  isWinner?: boolean
+  // Score from judge (1-10)
+  judgeScore?: number
 }
 
 export type CameraMode = 'focused' | 'overview' | 'follow-active'
 
-// Zone colors for different sessions - ice/cyan theme
+// Zone colors for different sessions - Black & White Glowy ASCII theme
+// All zones use white glow on black - the intensity varies
 export const ZONE_COLORS = [
-  0x4ac8e8, // Cyan (primary)
-  0x60a5fa, // Blue
-  0x22d3d8, // Teal
-  0x4ade80, // Green
-  0xa78bfa, // Purple
-  0xfbbf24, // Orange
-  0xf472b6, // Pink
-  0xa3e635, // Lime
+  0xffffff, // Pure White
+  0xffffff, // Pure White
+  0xffffff, // Pure White
+  0xffffff, // Pure White
+  0xffffff, // Pure White
+  0xffffff, // Pure White
+  0xffffff, // Pure White
+  0xffffff, // Pure White
 ]
 
 export class WorkshopScene {
@@ -196,6 +207,12 @@ export class WorkshopScene {
   // Time accumulator for animations
   private time = 0
 
+  // Batch competition visuals (beams between competing zones)
+  private batchBeams: Map<string, {
+    line: THREE.Line
+    zones: string[]  // Zone IDs in this batch
+  }> = new Map()
+
   // World hex grid overlay
   private worldHexGrid: THREE.Group | THREE.LineSegments | null = null
 
@@ -228,10 +245,11 @@ export class WorkshopScene {
   constructor(container: HTMLElement) {
     this.container = container
 
-    // Scene - dark blue-black like ice cave
+    // Scene - pure black for ASCII glow aesthetic
     this.scene = new THREE.Scene()
-    this.scene.background = new THREE.Color(0x080c14)
-    // No fog - allows viewing multiple zones without fadeout
+    this.scene.background = new THREE.Color(0x000000)
+    // Subtle fog for depth
+    this.scene.fog = new THREE.Fog(0x000000, 50, 200)
 
     // Hex grid for zone placement (radius=10, spacing=1.0 for touching hexes)
     this.hexGrid = new HexGrid(10, 1.0)
@@ -307,9 +325,9 @@ export class WorkshopScene {
 
     const geometry = new THREE.BufferGeometry().setFromPoints(points)
     const material = new THREE.LineBasicMaterial({
-      color: 0x8eeeff,  // Light cyan
+      color: 0xffffff,  // Pure white for ASCII glow
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.8,
     })
 
     this.hoverHighlight = new THREE.Line(geometry, material)
@@ -393,13 +411,13 @@ export class WorkshopScene {
     group.position.copy(position)
 
     // Translucent hexagon outline (reuse hex shape helper)
-    const ring = this.createHexOutline(10, 0x4ac8e8, 0.5)
+    const ring = this.createHexOutline(10, 0xffffff, 0.5)
     group.add(ring)
 
     // Spinning loader - dots arranged in a circle
     const spinner = new THREE.Group()
     const dotGeom = new THREE.SphereGeometry(P.DOT_RADIUS, P.DOT_SEGMENTS, P.DOT_SEGMENTS)
-    const dotMat = new THREE.MeshBasicMaterial({ color: 0x4ac8e8, opacity: 0.8, transparent: true })
+    const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.8, transparent: true })
 
     for (let i = 0; i < P.DOT_COUNT; i++) {
       const dot = new THREE.Mesh(dotGeom, dotMat.clone())
@@ -741,6 +759,22 @@ export class WorkshopScene {
       ;(zone.sideMesh.material as THREE.MeshStandardMaterial).dispose()
     }
 
+    // Clean up batch beam if this zone was part of one
+    if (zone.batchId) {
+      const beam = this.batchBeams.get(zone.batchId)
+      if (beam) {
+        // Check if other zones still in batch
+        const remainingZones = beam.zones.filter(id => id !== sessionId)
+        if (remainingZones.length < 2) {
+          // Remove beam if less than 2 zones remain
+          this.removeBatchBeam(zone.batchId)
+        } else {
+          // Update beam to exclude this zone
+          beam.zones = remainingZones
+        }
+      }
+    }
+
     this.zones.delete(sessionId)
     console.log(`Deleted zone for session ${sessionId.slice(0, 8)}`)
 
@@ -757,8 +791,16 @@ export class WorkshopScene {
     const zone = this.zones.get(sessionId)
     if (!zone) return
 
+    // Unhighlight previously focused zone
+    if (this.focusedZoneId && this.focusedZoneId !== sessionId) {
+      this.setZoneHighlight(this.focusedZoneId, false)
+    }
+
     this.focusedZoneId = sessionId
     this.cameraMode = 'focused'
+
+    // Highlight the newly focused zone
+    this.setZoneHighlight(sessionId, true)
 
     // Account for zone elevation (raised zones from hex painting underneath)
     const target = zone.position.clone()
@@ -773,6 +815,26 @@ export class WorkshopScene {
     }
 
     this.notifyCameraModeChange()
+  }
+
+  /**
+   * Set zone highlight state (selected/focused zones glow brighter)
+   */
+  setZoneHighlight(sessionId: string, highlighted: boolean): void {
+    const zone = this.zones.get(sessionId)
+    if (!zone) return
+
+    const ringMat = zone.ring.material as THREE.MeshBasicMaterial
+    const floorMat = zone.floor.material as THREE.MeshStandardMaterial
+
+    if (highlighted) {
+      // Bright white glow when selected
+      ringMat.opacity = 1.0
+      floorMat.emissiveIntensity = 0.15
+    } else {
+      // Return to status-based appearance
+      this.setZoneStatus(sessionId, zone.status)
+    }
   }
 
   /**
@@ -1050,9 +1112,9 @@ export class WorkshopScene {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
 
     const material = new THREE.LineBasicMaterial({
-      color: color,
+      color: 0xffffff,  // Always white for ASCII theme
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.9,
       linewidth: 2,
     })
 
@@ -1111,10 +1173,12 @@ export class WorkshopScene {
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
 
     const material = new THREE.MeshStandardMaterial({
-      color: color,
+      color: 0x0a0a0a,  // Near black for ASCII theme
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.85,
       side: THREE.DoubleSide,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.05,
     })
 
     return new THREE.Mesh(geometry, material)
@@ -1230,30 +1294,46 @@ export class WorkshopScene {
   private createZonePlatform(group: THREE.Group, color: number): { platform: THREE.Mesh; ring: THREE.Mesh; floor: THREE.Mesh } {
     const hexRadius = 10
 
-    // Zone floor hexagon - slightly brighter/more active than world
+    // Zone floor hexagon - pure black with subtle white edge glow
     const floorShape = this.createHexagonShape(hexRadius)
     const floorGeometry = new THREE.ShapeGeometry(floorShape)
     const floorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x1a2535,  // Slightly brighter blue - more "active"
-      roughness: 0.7,
-      metalness: 0.15,
-      emissive: color,
-      emissiveIntensity: 0.02,  // Subtle glow from zone color
+      color: 0x000000,  // Pure black floor
+      roughness: 0.9,
+      metalness: 0.0,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.03,  // Very subtle white glow
     })
     const floor = new THREE.Mesh(floorGeometry, floorMaterial)
     floor.rotation.x = -Math.PI / 2
     floor.receiveShadow = true
     group.add(floor)
 
-    // Colored hex ring around zone (will pulse with activity)
+    // OUTER GLOW - soft wide glow around the hexagon
+    const outerGlowShape = this.createHexagonShape(hexRadius + 0.8)
+    const outerGlowInner = this.createHexagonShape(hexRadius)
+    outerGlowShape.holes.push(outerGlowInner as unknown as THREE.Path)
+    const outerGlowGeometry = new THREE.ShapeGeometry(outerGlowShape)
+    const outerGlowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.08,
+      side: THREE.DoubleSide,
+    })
+    const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial)
+    outerGlow.rotation.x = -Math.PI / 2
+    outerGlow.position.y = 0.005
+    group.add(outerGlow)
+
+    // MAIN RING - bright white border
     const outerShape = this.createHexagonShape(hexRadius)
-    const innerShape = this.createHexagonShape(hexRadius - 0.5)
+    const innerShape = this.createHexagonShape(hexRadius - 0.4)
     outerShape.holes.push(innerShape as unknown as THREE.Path)
     const ringGeometry = new THREE.ShapeGeometry(outerShape)
     const ringMaterial = new THREE.MeshBasicMaterial({
-      color: color,
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.85,
       side: THREE.DoubleSide,
     })
     const ring = new THREE.Mesh(ringGeometry, ringMaterial)
@@ -1261,24 +1341,83 @@ export class WorkshopScene {
     ring.position.y = 0.02
     group.add(ring)
 
-    // Center platform (keep as cylinder - looks like a pedestal)
-    const platformGeometry = new THREE.CylinderGeometry(1, 1.2, 0.2, 6) // 6 sides for hex
+    // INNER GLOW - gradient fade inward
+    const innerGlowOuter = this.createHexagonShape(hexRadius - 0.4)
+    const innerGlowInner = this.createHexagonShape(hexRadius - 2.0)
+    innerGlowOuter.holes.push(innerGlowInner as unknown as THREE.Path)
+    const innerGlowGeometry = new THREE.ShapeGeometry(innerGlowOuter)
+    const innerGlowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.2,
+      side: THREE.DoubleSide,
+    })
+    const innerGlow = new THREE.Mesh(innerGlowGeometry, innerGlowMaterial)
+    innerGlow.rotation.x = -Math.PI / 2
+    innerGlow.position.y = 0.015
+    group.add(innerGlow)
+
+    // CORNER ACCENTS - bright dots at each vertex
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i - Math.PI / 2
+      const x = hexRadius * Math.cos(angle)
+      const z = hexRadius * Math.sin(angle)
+      const dotGeometry = new THREE.CircleGeometry(0.25, 6)
+      const dotMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.7,
+      })
+      const dot = new THREE.Mesh(dotGeometry, dotMaterial)
+      dot.rotation.x = -Math.PI / 2
+      dot.position.set(x, 0.025, z)
+      group.add(dot)
+    }
+
+    // Center platform - black with white glow edge
+    const platformGeometry = new THREE.CylinderGeometry(1, 1.2, 0.15, 6) // 6 sides for hex
     const platformMaterial = new THREE.MeshStandardMaterial({
-      color: color,
-      roughness: 0.5,
-      metalness: 0.3,
-      emissive: color,
-      emissiveIntensity: 0.1,
+      color: 0x0a0a0a,  // Near black
+      roughness: 0.7,
+      metalness: 0.2,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.08,
     })
     const platform = new THREE.Mesh(platformGeometry, platformMaterial)
-    platform.position.y = 0.1
+    platform.position.y = 0.075
     platform.rotation.y = Math.PI / 6 // Align with hex
     platform.receiveShadow = true
     platform.castShadow = true
     group.add(platform)
 
-    // No internal hex grid lines - zone floor is clean
-    // World hex grid shows through conceptually
+    // Add glowing edge lines for the hexagon outline - DOUBLE LINE for more visibility
+    const edgePoints: THREE.Vector3[] = []
+    for (let i = 0; i <= 6; i++) {
+      const angle = (Math.PI / 3) * i - Math.PI / 2
+      edgePoints.push(new THREE.Vector3(
+        hexRadius * Math.cos(angle),
+        0.04,
+        hexRadius * Math.sin(angle)
+      ))
+    }
+    const edgeGeometry = new THREE.BufferGeometry().setFromPoints(edgePoints)
+    const edgeLineMaterial = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 1.0,
+    })
+    const edgeLine = new THREE.Line(edgeGeometry, edgeLineMaterial)
+    group.add(edgeLine)
+
+    // Second edge line slightly raised for glow effect
+    const edgeLine2 = new THREE.Line(edgeGeometry.clone(), new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.5,
+    }))
+    edgeLine2.position.y = 0.02
+    edgeLine2.scale.setScalar(1.02)
+    group.add(edgeLine2)
 
     return { platform, ring, floor }
   }
@@ -1288,7 +1427,7 @@ export class WorkshopScene {
    */
   private addHexGridLines(group: THREE.Group, radius: number): void {
     const lineMaterial = new THREE.LineBasicMaterial({
-      color: 0x3090b0,  // Cyan/teal
+      color: 0x333333,  // Dark gray for ASCII theme
       transparent: true,
       opacity: 0.25
     })
@@ -1457,6 +1596,258 @@ export class WorkshopScene {
     material.needsUpdate = true
   }
 
+  /**
+   * Update zone task progress (0-100)
+   */
+  updateZoneProgress(sessionId: string, progress: number, batchId?: string): void {
+    const zone = this.zones.get(sessionId)
+    if (!zone) return
+
+    const previousBatchId = zone.batchId
+    zone.taskProgress = progress
+    zone.batchId = batchId
+
+    // Create progress ring if it doesn't exist
+    if (!zone.progressRing) {
+      zone.progressRing = this.createProgressRing()
+      zone.group.add(zone.progressRing)
+    }
+
+    // Update progress ring
+    this.updateProgressRing(zone.progressRing, progress)
+
+    // Update label to show progress
+    if (zone.label) {
+      const labelText = zone.label.userData.originalLabel || sessionId
+      const progressText = progress < 100 ? ` [${progress}%]` : ' ✓'
+      this.updateZoneLabelWithProgress(zone, labelText, progressText)
+    }
+
+    // Handle batch competition visuals
+    if (batchId && batchId !== previousBatchId) {
+      this.updateBatchBeam(batchId)
+    }
+
+    // Remove beam if batch completed (all zones at 100%)
+    if (batchId && progress >= 100) {
+      const batchZones = this.getZonesInBatch(batchId)
+      const allComplete = batchZones.every(z => (z.taskProgress ?? 0) >= 100)
+      if (allComplete) {
+        this.removeBatchBeam(batchId)
+      }
+    }
+  }
+
+  /**
+   * Create or update the competition beam between zones in a batch
+   */
+  private updateBatchBeam(batchId: string): void {
+    const batchZones = this.getZonesInBatch(batchId)
+    if (batchZones.length < 2) return
+
+    // Remove existing beam for this batch
+    this.removeBatchBeam(batchId)
+
+    // Create points connecting all zones in the batch
+    const points: THREE.Vector3[] = []
+    for (const zone of batchZones) {
+      points.push(new THREE.Vector3(
+        zone.position.x,
+        zone.elevation + 1.5,  // Float above the zones
+        zone.position.z
+      ))
+    }
+    // Close the loop if more than 2 zones
+    if (points.length > 2) {
+      points.push(points[0].clone())
+    }
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(points)
+    const material = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.6,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+    // Use dashed line for competition effect
+    const line = new THREE.Line(geometry, material)
+
+    this.scene.add(line)
+    this.batchBeams.set(batchId, {
+      line,
+      zones: batchZones.map(z => z.id),
+    })
+  }
+
+  /**
+   * Remove the competition beam for a batch
+   */
+  private removeBatchBeam(batchId: string): void {
+    const beam = this.batchBeams.get(batchId)
+    if (beam) {
+      this.scene.remove(beam.line)
+      beam.line.geometry.dispose()
+      ;(beam.line.material as THREE.LineBasicMaterial).dispose()
+      this.batchBeams.delete(batchId)
+    }
+  }
+
+  /**
+   * Create a progress ring mesh
+   */
+  private createProgressRing(): THREE.Mesh {
+    const geometry = new THREE.RingGeometry(8, 8.5, 64, 1, 0, 0)
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+    })
+    const ring = new THREE.Mesh(geometry, material)
+    ring.rotation.x = -Math.PI / 2
+    ring.position.y = 0.05
+    return ring
+  }
+
+  /**
+   * Update progress ring to show current progress
+   */
+  private updateProgressRing(ring: THREE.Mesh, progress: number): void {
+    // Dispose old geometry
+    ring.geometry.dispose()
+    
+    // Create new geometry with progress arc
+    const progressAngle = (progress / 100) * Math.PI * 2
+    const geometry = new THREE.RingGeometry(8, 8.5, 64, 1, -Math.PI / 2, progressAngle)
+    ring.geometry = geometry
+
+    // Change color based on progress
+    const material = ring.material as THREE.MeshBasicMaterial
+    if (progress >= 100) {
+      material.color.setHex(0x00ff00) // Green when complete
+      material.opacity = 1.0
+    } else if (progress > 0) {
+      material.color.setHex(0xffffff) // White while working
+      material.opacity = 0.9
+    }
+  }
+
+  /**
+   * Update zone label with progress text
+   */
+  private updateZoneLabelWithProgress(zone: Zone, label: string, progressText: string): void {
+    if (!zone.label) return
+
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')!
+    canvas.width = 512
+    canvas.height = 96
+
+    // Store original label
+    zone.label.userData.originalLabel = label
+
+    // Draw label with progress
+    this.drawLabelShape(ctx, canvas.width, canvas.height, zone.color, label + progressText)
+
+    const material = zone.label.material as THREE.SpriteMaterial
+    if (material.map) {
+      material.map.dispose()
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    material.map = texture
+    material.needsUpdate = true
+  }
+
+  /**
+   * Mark a zone as the winner of a judge comparison
+   */
+  setZoneWinner(sessionId: string, isWinner: boolean, score?: number): void {
+    const zone = this.zones.get(sessionId)
+    if (!zone) return
+
+    zone.isWinner = isWinner
+    zone.judgeScore = score
+
+    if (isWinner) {
+      // Winner glow effect - bright green-cyan
+      const ringMat = zone.ring.material as THREE.MeshBasicMaterial
+      ringMat.color.setHex(0x00ff88)
+      ringMat.opacity = 1.0
+
+      const floorMat = zone.floor.material as THREE.MeshStandardMaterial
+      floorMat.emissive.setHex(0x00ff88)
+      floorMat.emissiveIntensity = 0.2
+
+      // Update label with score (clean, no icons)
+      if (zone.label) {
+        const label = zone.label.userData.originalLabel || sessionId
+        const winnerText = score ? ` ${score}/10` : ''
+        this.updateZoneLabelWithProgress(zone, label, winnerText)
+      }
+
+      // Emit celebration particles
+      this.emitWinnerParticles(zone)
+
+      // Remove batch beam since competition is over
+      if (zone.batchId) {
+        this.removeBatchBeam(zone.batchId)
+      }
+    } else if (zone.batchId) {
+      // Loser - dim the zone slightly
+      const ringMat = zone.ring.material as THREE.MeshBasicMaterial
+      ringMat.color.setHex(0x666666) // Dimmed gray
+      ringMat.opacity = 0.4
+
+      const floorMat = zone.floor.material as THREE.MeshStandardMaterial
+      floorMat.emissiveIntensity = 0.01
+    }
+  }
+
+  /**
+   * Emit celebration particles for winner
+   */
+  private emitWinnerParticles(zone: Zone): void {
+    const positions = zone.particles.geometry.attributes.position.array as Float32Array
+    const velocities = zone.particleVelocities
+
+    // Activate all particles in a burst
+    for (let i = 0; i < positions.length / 3; i++) {
+      // Spawn from center, spread outward
+      const angle = (i / (positions.length / 3)) * Math.PI * 2
+      const radius = Math.random() * 2
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = 1
+      positions[i * 3 + 2] = Math.sin(angle) * radius
+
+      // Burst upward and outward
+      velocities[i * 3] = Math.cos(angle) * (2 + Math.random() * 3)
+      velocities[i * 3 + 1] = 4 + Math.random() * 4
+      velocities[i * 3 + 2] = Math.sin(angle) * (2 + Math.random() * 3)
+    }
+
+    // Change particle color to winner green
+    const particleMat = zone.particles.material as THREE.PointsMaterial
+    particleMat.color.setHex(0x00ff88)
+
+    zone.particles.geometry.attributes.position.needsUpdate = true
+  }
+
+  /**
+   * Get all zones in a batch
+   */
+  getZonesInBatch(batchId: string): Zone[] {
+    const zones: Zone[] = []
+    for (const zone of this.zones.values()) {
+      if (zone.batchId === batchId) {
+        zones.push(zone)
+      }
+    }
+    return zones
+  }
+
   // ============================================================================
   // Text Tiles (Grid Labels)
   // ============================================================================
@@ -1611,7 +2002,7 @@ export class WorkshopScene {
     canvas.width = 1024
     canvas.height = 512
 
-    const tileColor = color || '#4ac8e8'  // Default to cyan theme
+    const tileColor = color || '#ffffff'  // Default to white for ASCII theme
     const fontSize = 36
     const lineHeight = fontSize * 1.4
     const padding = 32
@@ -1779,18 +2170,18 @@ export class WorkshopScene {
 
     if (hasChanges) {
       text = `${gitStatus.branch} +${gitStatus.linesAdded}/-${gitStatus.linesRemoved}`
-      // Color based on amount of changes
+      // Grayscale based on amount of changes
       const changeScore = gitStatus.linesAdded + gitStatus.linesRemoved
       if (changeScore > 500) {
-        color = '#f87171'  // Red - lots of changes
+        color = '#666666'  // Dark gray - lots of changes
       } else if (changeScore > 100) {
-        color = '#fbbf24'  // Amber - moderate changes
+        color = '#999999'  // Medium gray - moderate changes
       } else {
-        color = '#4ade80'  // Green - small changes
+        color = '#ffffff'  // White - small changes
       }
     } else {
       text = `${gitStatus.branch} ✓`
-      color = '#9ca3af'  // Gray - clean
+      color = '#666666'  // Dark gray - clean
     }
 
     // Draw the label
@@ -1880,6 +2271,7 @@ export class WorkshopScene {
 
   /**
    * Set zone status - changes floor AND ring color to indicate state
+   * Black & White Glowy ASCII theme - white glow intensity indicates activity
    */
   setZoneStatus(sessionId: string, status: Zone['status']): void {
     const zone = this.zones.get(sessionId)
@@ -1889,13 +2281,14 @@ export class WorkshopScene {
     const floorMat = zone.floor.material as THREE.MeshStandardMaterial
     const ringMat = zone.ring.material as THREE.MeshBasicMaterial
 
-    // Status color mappings (ice/cyan theme)
+    // Status color mappings (Black & White ASCII theme)
+    // Higher intensity = more active, lower = less active
     const statusColors: Record<Zone['status'], { emissive: number; intensity: number; ring: number; ringOpacity: number }> = {
-      idle: { emissive: zone.color, intensity: 0.02, ring: zone.color, ringOpacity: 0.4 },
-      working: { emissive: 0x22d3ee, intensity: 0.08, ring: 0x22d3ee, ringOpacity: 0.5 },
-      waiting: { emissive: 0xfbbf24, intensity: 0.06, ring: 0xfbbf24, ringOpacity: 0.6 },
-      attention: { emissive: 0xf87171, intensity: 0.10, ring: 0xf87171, ringOpacity: 0.7 },
-      offline: { emissive: 0x404050, intensity: 0.01, ring: 0x404050, ringOpacity: 0.2 },
+      idle: { emissive: 0xffffff, intensity: 0.03, ring: 0xffffff, ringOpacity: 0.5 },
+      working: { emissive: 0xffffff, intensity: 0.12, ring: 0xffffff, ringOpacity: 0.85 },
+      waiting: { emissive: 0xffffff, intensity: 0.08, ring: 0xffffff, ringOpacity: 0.7 },
+      attention: { emissive: 0xffffff, intensity: 0.25, ring: 0xffffff, ringOpacity: 1.0 },
+      offline: { emissive: 0x444444, intensity: 0.01, ring: 0x666666, ringOpacity: 0.2 },
     }
 
     const colors = statusColors[status]
@@ -2051,7 +2444,7 @@ export class WorkshopScene {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
 
     const material = new THREE.PointsMaterial({
-      color: 0x4ac8e8, // Cyan to match ice theme
+      color: 0xffffff, // White for ASCII theme
       size: 0.12,
       transparent: true,
       opacity: 0.4,
@@ -2100,15 +2493,15 @@ export class WorkshopScene {
       label: string
       color: number
     }> = [
-      { type: 'center', position: [0, 0, 0], label: 'Center', color: zoneColor },
-      { type: 'bookshelf', position: [0, 0, -4], label: 'Library', color: 0x2a4a5a },      // Dark teal
-      { type: 'desk', position: [4, 0, 0], label: 'Desk', color: 0x3a4a5a },              // Blue-gray
-      { type: 'workbench', position: [-4, 0, 0], label: 'Workbench', color: 0x3a4a55 },   // Steel blue
-      { type: 'terminal', position: [0, 0, 4], label: 'Terminal', color: 0x1a2a3a },      // Dark blue
-      { type: 'scanner', position: [3, 0, -3], label: 'Scanner', color: 0x2a4a6a },       // Blue
-      { type: 'antenna', position: [-3, 0, -3], label: 'Antenna', color: 0x3a5a6a },      // Teal
-      { type: 'portal', position: [-3, 0, 3], label: 'Portal', color: 0x3a4a6a },         // Deep blue
-      { type: 'taskboard', position: [3, 0, 3], label: 'Task Board', color: 0x3a4a5a },   // Blue-gray
+      { type: 'center', position: [0, 0, 0], label: 'Center', color: 0x1a1a1a },           // Dark gray
+      { type: 'bookshelf', position: [0, 0, -4], label: 'Library', color: 0x1a1a1a },      // Dark gray
+      { type: 'desk', position: [4, 0, 0], label: 'Desk', color: 0x2a2a2a },              // Gray
+      { type: 'workbench', position: [-4, 0, 0], label: 'Workbench', color: 0x252525 },   // Dark gray
+      { type: 'terminal', position: [0, 0, 4], label: 'Terminal', color: 0x0f0f0f },      // Near black
+      { type: 'scanner', position: [3, 0, -3], label: 'Scanner', color: 0x1f1f1f },       // Dark gray
+      { type: 'antenna', position: [-3, 0, -3], label: 'Antenna', color: 0x2f2f2f },      // Gray
+      { type: 'portal', position: [-3, 0, 3], label: 'Portal', color: 0x1a1a1a },         // Dark gray
+      { type: 'taskboard', position: [3, 0, 3], label: 'Task Board', color: 0x252525 },   // Dark gray
     ]
 
     for (const config of stationConfigs) {
@@ -2147,53 +2540,17 @@ export class WorkshopScene {
       }
     }
 
-    // Base/table
-    const baseGeometry = new THREE.BoxGeometry(1.5, 0.8, 1)
-    const baseMaterial = new THREE.MeshStandardMaterial({
-      color: config.color,
-      roughness: 0.7,
-      metalness: 0.2,
-    })
-    const base = new THREE.Mesh(baseGeometry, baseMaterial)
-    base.position.y = 0.4
-    base.castShadow = true
-    base.receiveShadow = true
-    stationGroup.add(base)
+    // ASCII-themed station - simple geometric wireframe
+    // Each station is a unique geometric shape with white glowing edges
+    const stationShape = this.createAsciiStationShape(config.type)
+    stationGroup.add(stationShape)
 
-    // Station-specific details (from modular station files)
-    switch (config.type) {
-      case 'bookshelf':
-        addBookshelfDetails(stationGroup)
-        break
-      case 'desk':
-        addDeskDetails(stationGroup)
-        break
-      case 'workbench':
-        addWorkbenchDetails(stationGroup)
-        break
-      case 'terminal':
-        addTerminalDetails(stationGroup)
-        break
-      case 'antenna':
-        addAntennaDetails(stationGroup)
-        break
-      case 'portal':
-        addPortalDetails(stationGroup)
-        break
-      case 'scanner':
-        addScannerDetails(stationGroup)
-        break
-      case 'taskboard':
-        addTaskboardDetails(stationGroup)
-        break
-    }
-
-    // Station indicator ring
-    const ringGeometry = new THREE.RingGeometry(0.9, 1, 32)
+    // Station indicator ring - white glow
+    const ringGeometry = new THREE.RingGeometry(0.7, 0.8, 6) // Hexagonal ring
     const ringMaterial = new THREE.MeshBasicMaterial({
-      color: config.color,
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.3,
+      opacity: 0.4,
       side: THREE.DoubleSide,
     })
     const ring = new THREE.Mesh(ringGeometry, ringMaterial)
@@ -2243,6 +2600,189 @@ export class WorkshopScene {
     // Hemisphere light for nice ambient fill (cheaper than point lights)
     const hemi = new THREE.HemisphereLight(0xfff5e6, 0x404060, 0.4)
     this.scene.add(hemi)
+  }
+
+  /**
+   * Create ASCII-themed station shapes - simple geometric wireframes
+   */
+  private createAsciiStationShape(type: StationType): THREE.Group {
+    const group = new THREE.Group()
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.8,
+    })
+    const solidMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0a0a0a,
+      roughness: 0.9,
+      metalness: 0.1,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.03,
+    })
+
+    switch (type) {
+      case 'bookshelf': {
+        // Vertical data pillar with horizontal lines
+        const pillarGeo = new THREE.BoxGeometry(0.4, 1.2, 0.4)
+        const pillar = new THREE.Mesh(pillarGeo, solidMaterial)
+        pillar.position.y = 0.6
+        group.add(pillar)
+        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(pillarGeo), lineMaterial)
+        edges.position.y = 0.6
+        group.add(edges)
+        // Data lines
+        for (let i = 0; i < 4; i++) {
+          const lineGeo = new THREE.PlaneGeometry(0.3, 0.02)
+          const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }))
+          line.position.set(0, 0.3 + i * 0.25, 0.21)
+          group.add(line)
+        }
+        break
+      }
+      case 'desk': {
+        // Flat surface with floating screen
+        const deskGeo = new THREE.BoxGeometry(1.2, 0.08, 0.8)
+        const desk = new THREE.Mesh(deskGeo, solidMaterial)
+        desk.position.y = 0.5
+        group.add(desk)
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(deskGeo), lineMaterial).translateY(0.5))
+        // Floating screen
+        const screenGeo = new THREE.PlaneGeometry(0.6, 0.4)
+        const screen = new THREE.Mesh(screenGeo, new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 0.9 }))
+        screen.position.set(0, 0.9, 0)
+        group.add(screen)
+        const screenEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(0.6, 0.4, 0.02)), lineMaterial)
+        screenEdges.position.set(0, 0.9, 0)
+        group.add(screenEdges)
+        break
+      }
+      case 'workbench': {
+        // Gear/cog shape
+        const torusGeo = new THREE.TorusGeometry(0.4, 0.08, 8, 6)
+        const torus = new THREE.Mesh(torusGeo, solidMaterial)
+        torus.rotation.x = Math.PI / 2
+        torus.position.y = 0.6
+        group.add(torus)
+        // Center hub
+        const hubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.2, 6)
+        const hub = new THREE.Mesh(hubGeo, solidMaterial)
+        hub.position.y = 0.6
+        group.add(hub)
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(hubGeo), lineMaterial).translateY(0.6))
+        break
+      }
+      case 'terminal': {
+        // Monitor/console shape
+        const monitorGeo = new THREE.BoxGeometry(0.8, 0.6, 0.1)
+        const monitor = new THREE.Mesh(monitorGeo, solidMaterial)
+        monitor.position.y = 0.8
+        group.add(monitor)
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(monitorGeo), lineMaterial).translateY(0.8))
+        // Screen glow
+        const screenGeo = new THREE.PlaneGeometry(0.65, 0.45)
+        const screen = new THREE.Mesh(screenGeo, new THREE.MeshBasicMaterial({ color: 0x0a0a0a }))
+        screen.position.set(0, 0.8, 0.06)
+        group.add(screen)
+        // Terminal prompt lines
+        for (let i = 0; i < 3; i++) {
+          const lineGeo = new THREE.PlaneGeometry(0.5, 0.02)
+          const line = new THREE.Mesh(lineGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }))
+          line.position.set(-0.05, 0.9 - i * 0.12, 0.07)
+          group.add(line)
+        }
+        // Stand
+        const standGeo = new THREE.BoxGeometry(0.15, 0.4, 0.15)
+        const stand = new THREE.Mesh(standGeo, solidMaterial)
+        stand.position.y = 0.3
+        group.add(stand)
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(standGeo), lineMaterial).translateY(0.3))
+        break
+      }
+      case 'scanner': {
+        // Radar/scanner dish
+        const dishGeo = new THREE.ConeGeometry(0.5, 0.3, 8, 1, true)
+        const dish = new THREE.Mesh(dishGeo, solidMaterial)
+        dish.rotation.x = Math.PI
+        dish.position.y = 0.8
+        group.add(dish)
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(dishGeo), lineMaterial).rotateX(Math.PI).translateY(-0.8))
+        // Pole
+        const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.6, 6)
+        const pole = new THREE.Mesh(poleGeo, solidMaterial)
+        pole.position.y = 0.3
+        group.add(pole)
+        break
+      }
+      case 'antenna': {
+        // Signal tower
+        const towerGeo = new THREE.CylinderGeometry(0.03, 0.08, 1.2, 6)
+        const tower = new THREE.Mesh(towerGeo, solidMaterial)
+        tower.position.y = 0.6
+        group.add(tower)
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(towerGeo), lineMaterial).translateY(0.6))
+        // Signal rings
+        for (let i = 0; i < 3; i++) {
+          const ringGeo = new THREE.RingGeometry(0.15 + i * 0.15, 0.18 + i * 0.15, 16)
+          const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ 
+            color: 0xffffff, transparent: true, opacity: 0.3 - i * 0.08, side: THREE.DoubleSide 
+          }))
+          ring.position.set(0, 1.1, 0.1 + i * 0.1)
+          group.add(ring)
+        }
+        break
+      }
+      case 'portal': {
+        // Hexagonal portal frame
+        const portalShape = new THREE.Shape()
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i - Math.PI / 2
+          const x = 0.5 * Math.cos(angle)
+          const y = 0.5 * Math.sin(angle)
+          if (i === 0) portalShape.moveTo(x, y)
+          else portalShape.lineTo(x, y)
+        }
+        portalShape.closePath()
+        const portalGeo = new THREE.ShapeGeometry(portalShape)
+        const portal = new THREE.Mesh(portalGeo, new THREE.MeshBasicMaterial({ 
+          color: 0x111111, transparent: true, opacity: 0.8, side: THREE.DoubleSide 
+        }))
+        portal.position.y = 0.7
+        group.add(portal)
+        // Glowing edge
+        const edgePoints: THREE.Vector3[] = []
+        for (let i = 0; i <= 6; i++) {
+          const angle = (Math.PI / 3) * i - Math.PI / 2
+          edgePoints.push(new THREE.Vector3(0.5 * Math.cos(angle), 0.5 * Math.sin(angle), 0))
+        }
+        const edgeGeo = new THREE.BufferGeometry().setFromPoints(edgePoints)
+        const edge = new THREE.Line(edgeGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }))
+        edge.position.y = 0.7
+        group.add(edge)
+        break
+      }
+      case 'taskboard': {
+        // Grid of squares
+        const boardGeo = new THREE.BoxGeometry(0.9, 0.7, 0.05)
+        const board = new THREE.Mesh(boardGeo, solidMaterial)
+        board.position.y = 0.7
+        group.add(board)
+        group.add(new THREE.LineSegments(new THREE.EdgesGeometry(boardGeo), lineMaterial).translateY(0.7))
+        // Task squares
+        for (let row = 0; row < 2; row++) {
+          for (let col = 0; col < 3; col++) {
+            const squareGeo = new THREE.PlaneGeometry(0.2, 0.2)
+            const square = new THREE.Mesh(squareGeo, new THREE.MeshBasicMaterial({ 
+              color: 0xffffff, transparent: true, opacity: 0.15 
+            }))
+            square.position.set(-0.25 + col * 0.25, 0.8 - row * 0.25, 0.03)
+            group.add(square)
+          }
+        }
+        break
+      }
+    }
+
+    return group
   }
 
   // World floor for empty-space click detection
@@ -2322,7 +2862,7 @@ export class WorkshopScene {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
 
     const material = new THREE.LineBasicMaterial({
-      color: 0x4ac8e8,  // Cyan/ice blue
+      color: 0xffffff,  // White for ASCII theme
       transparent: true,
       opacity: 0.35,
     })
@@ -2552,6 +3092,9 @@ export class WorkshopScene {
       // Update station pulses
       this.updateStationPulses(delta)
 
+      // Update batch competition animations
+      this.updateBatchCompetition(delta)
+
       // Update pending zones (loading animations)
       this.updatePendingZones(delta)
 
@@ -2729,16 +3272,17 @@ export class WorkshopScene {
   }
 
   private getStationColor(type: StationType): string {
+    // All white for ASCII theme - stations differentiated by shape/position
     const colors: Record<StationType, string> = {
-      center: '#4ac8e8',    // Cyan (primary)
-      bookshelf: '#fbbf24', // Orange/gold for books
-      desk: '#4ade80',      // Green
-      workbench: '#f97316', // Orange
-      terminal: '#22d3ee',  // Cyan
-      scanner: '#60a5fa',   // Blue
-      antenna: '#4ac8e8',   // Cyan
-      portal: '#22d3d8',    // Teal
-      taskboard: '#fb923c', // Orange
+      center: '#ffffff',    // White
+      bookshelf: '#cccccc', // Light gray
+      desk: '#dddddd',      // Light gray
+      workbench: '#bbbbbb', // Gray
+      terminal: '#ffffff',  // White
+      scanner: '#cccccc',   // Light gray
+      antenna: '#dddddd',   // Light gray
+      portal: '#eeeeee',    // Near white
+      taskboard: '#cccccc', // Light gray
     }
     return colors[type] || '#ffffff'
   }
@@ -2950,6 +3494,81 @@ export class WorkshopScene {
           opacity = pulse.peakOpacity - (pulse.peakOpacity - pulse.baseOpacity) * t
         }
         mat.opacity = opacity
+      }
+    }
+  }
+
+  /**
+   * Update batch competition animations (alternating highlights between competing zones)
+   */
+  private updateBatchCompetition(delta: number): void {
+    // Group zones by batchId
+    const batches = new Map<string, Zone[]>()
+    for (const zone of this.zones.values()) {
+      if (zone.batchId && !zone.isWinner && zone.status === 'working') {
+        const batch = batches.get(zone.batchId) || []
+        batch.push(zone)
+        batches.set(zone.batchId, batch)
+      }
+    }
+
+    // Animate each batch with competing zones
+    for (const [batchId, zones] of batches) {
+      if (zones.length < 2) continue
+
+      // Create alternating highlight using sine wave
+      // Each zone gets a phase offset so they pulse in sequence
+      const cycleSpeed = 2  // Full cycle every ~3 seconds
+      const baseTime = this.time * cycleSpeed
+
+      for (let i = 0; i < zones.length; i++) {
+        const zone = zones[i]
+        const phaseOffset = (i / zones.length) * Math.PI * 2
+        const intensity = (Math.sin(baseTime + phaseOffset) + 1) / 2  // 0 to 1
+
+        // Animate ring brightness
+        const ringMat = zone.ring.material as THREE.MeshBasicMaterial
+        ringMat.opacity = 0.4 + intensity * 0.6  // 0.4 to 1.0
+
+        // Animate floor emissive
+        const floorMat = zone.floor.material as THREE.MeshStandardMaterial
+        floorMat.emissiveIntensity = 0.05 + intensity * 0.15  // 0.05 to 0.2
+
+        // Subtle scale pulse on ring
+        zone.ring.scale.setScalar(1 + intensity * 0.03)
+      }
+
+      // Update beam animation (pulse opacity and update positions)
+      const beam = this.batchBeams.get(batchId)
+      if (beam) {
+        const beamMat = beam.line.material as THREE.LineBasicMaterial
+        const beamPulse = (Math.sin(this.time * 4) + 1) / 2
+        beamMat.opacity = 0.3 + beamPulse * 0.5
+
+        // Update beam positions in case zones moved (elevation changes)
+        const positions = beam.line.geometry.attributes.position.array as Float32Array
+        for (let i = 0; i < zones.length; i++) {
+          const zone = zones[i]
+          positions[i * 3] = zone.position.x
+          positions[i * 3 + 1] = zone.elevation + 1.5 + Math.sin(this.time * 3 + i) * 0.3
+          positions[i * 3 + 2] = zone.position.z
+        }
+        // Close loop if more than 2 zones
+        if (zones.length > 2) {
+          const firstZone = zones[0]
+          positions[zones.length * 3] = firstZone.position.x
+          positions[zones.length * 3 + 1] = firstZone.elevation + 1.5 + Math.sin(this.time * 3) * 0.3
+          positions[zones.length * 3 + 2] = firstZone.position.z
+        }
+        beam.line.geometry.attributes.position.needsUpdate = true
+      }
+    }
+
+    // Animate winner zones (gentle ring pulse)
+    for (const zone of this.zones.values()) {
+      if (zone.isWinner) {
+        const pulse = (Math.sin(this.time * 2) + 1) / 2
+        zone.ring.scale.setScalar(1 + pulse * 0.02)
       }
     }
   }
@@ -3369,6 +3988,10 @@ export class WorkshopScene {
     this.clearAllContexts()
     // Clean up painted hexes (draw mode)
     this.clearAllPaintedHexes()
+    // Clean up batch beams
+    for (const [batchId] of this.batchBeams) {
+      this.removeBatchBeam(batchId)
+    }
     // Clean up zone notifications (new system)
     this.zoneNotifications.dispose()
     // Clean up notifications (legacy)

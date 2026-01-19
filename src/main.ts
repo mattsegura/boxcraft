@@ -1,5 +1,5 @@
 /**
- * Vibecraft - Main Entry Point
+ * Boxcraft - Main Entry Point
  *
  * Visualize Claude Code as an interactive 3D workshop
  * Supports multiple Claude instances in separate zones
@@ -10,7 +10,8 @@ import * as THREE from 'three'
 import { WorkshopScene, ZONE_COLORS, type Zone, type CameraMode } from './scene/WorkshopScene'
 // Character model - swap by changing the import:
 // import { Claude } from './entities/Claude'      // Original simple character
-import { Claude } from './entities/ClaudeMon'      // Robot buddy character
+// import { Claude } from './entities/ClaudeMon'   // Robot buddy character
+import { Claude } from './entities/AsciiBot'       // ASCII-themed geometric bot
 import { SubagentManager } from './entities/SubagentManager'
 import { EventClient } from './events/EventClient'
 import { eventBus, type EventContext, type EventType } from './events/EventBus'
@@ -59,6 +60,7 @@ import { setupDirectoryAutocomplete } from './ui/DirectoryAutocomplete'
 import { checkForUpdates } from './ui/VersionChecker'
 import { drawMode } from './ui/DrawMode'
 import { setupTextLabelModal, showTextLabelModal } from './ui/TextLabelModal'
+import { showToast } from './ui/Toast'
 import { createSessionAPI, type SessionAPI } from './api'
 
 // ============================================================================
@@ -66,7 +68,7 @@ import { createSessionAPI, type SessionAPI } from './api'
 // ============================================================================
 
 // Injected by Vite at build time from shared/defaults.ts
-declare const __VIBECRAFT_DEFAULT_PORT__: number
+declare const __BOXCRAFT_DEFAULT_PORT__: number
 
 // Port configuration: URL param > localStorage > default from shared/defaults.ts
 function getAgentPort(): number {
@@ -74,10 +76,10 @@ function getAgentPort(): number {
   const urlPort = params.get('port')
   if (urlPort) return parseInt(urlPort, 10)
 
-  const storedPort = localStorage.getItem('vibecraft-agent-port')
+  const storedPort = localStorage.getItem('boxcraft-agent-port')
   if (storedPort) return parseInt(storedPort, 10)
 
-  return __VIBECRAFT_DEFAULT_PORT__
+  return __BOXCRAFT_DEFAULT_PORT__
 }
 
 const AGENT_PORT = getAgentPort()
@@ -326,9 +328,9 @@ function selectManagedSession(sessionId: string | null): void {
 
   // Persist selection to localStorage
   if (sessionId) {
-    localStorage.setItem('vibecraft-selected-session', sessionId)
+    localStorage.setItem('boxcraft-selected-session', sessionId)
   } else {
-    localStorage.removeItem('vibecraft-selected-session')
+    localStorage.removeItem('boxcraft-selected-session')
   }
 
   // Update feed filter to show only this session's events (or all if null)
@@ -337,10 +339,11 @@ function selectManagedSession(sessionId: string | null): void {
     // Filter by claudeSessionId if available, otherwise show nothing (session has no events yet)
     state.feedManager?.setFilter(session?.claudeSessionId ?? '__none__')
 
-    // Focus the 3D zone if session is linked
-    if (session?.claudeSessionId && state.scene) {
-      state.scene.focusZone(session.claudeSessionId)
-      focusSession(session.claudeSessionId)
+    // Focus the 3D zone if session is linked (local or Blackbox)
+    const zoneId = session?.claudeSessionId || (session?.taskId ? `task-${session.taskId}` : null)
+    if (zoneId && state.scene) {
+      state.scene.focusZone(zoneId)
+      focusSession(zoneId)
     }
   } else {
     state.feedManager?.setFilter(null)  // Show all sessions
@@ -371,14 +374,24 @@ interface SessionFlags {
   chrome?: boolean
 }
 
+/** Blackbox-specific options for session creation */
+interface BlackboxOptions {
+  repoUrl: string
+  prompt: string
+  branch?: string
+  agent?: 'blackbox' | 'claude' | 'codex' | 'gemini'
+  model?: string
+}
+
 async function createManagedSession(
   name?: string,
   cwd?: string,
   flags?: SessionFlags,
   hintPosition?: { x: number; z: number },
-  pendingZoneId?: string
+  pendingZoneId?: string,
+  blackboxOptions?: BlackboxOptions
 ): Promise<void> {
-  const data = await sessionAPI.createSession(name, cwd, flags)
+  const data = await sessionAPI.createSession(name, cwd, flags, blackboxOptions)
 
   if (!data.ok) {
     console.error('Failed to create session:', data.error)
@@ -542,6 +555,53 @@ function goToNextAttention(): void {
 // Current zone hint for the open modal (set when modal opens from click)
 let currentModalHint: { x: number; z: number } | null = null
 
+/** Current modal mode: 'blackbox', 'multi', or 'local' */
+let currentModalMode: 'blackbox' | 'multi' | 'local' = 'blackbox'
+
+/** Blackbox agents/models data */
+let blackboxAgents: Record<string, { id: string; name: string }[]> = {}
+let blackboxDefaults: Record<string, string> = {}
+let blackboxEnabled = false
+
+/**
+ * Fetch Blackbox agents and models from server
+ */
+async function fetchBlackboxAgents(): Promise<void> {
+  try {
+    const response = await fetch(`${API_URL}/blackbox/agents`)
+    const data = await response.json()
+    if (data.ok) {
+      blackboxAgents = data.agents || {}
+      blackboxDefaults = data.defaults || {}
+      blackboxEnabled = data.enabled || false
+      updateModelSelect()
+    }
+  } catch (e) {
+    console.error('Failed to fetch Blackbox agents:', e)
+  }
+}
+
+/**
+ * Update the model select based on selected agent
+ */
+function updateModelSelect(): void {
+  const agentSelect = document.getElementById('session-agent-select') as HTMLSelectElement
+  const modelSelect = document.getElementById('session-model-select') as HTMLSelectElement
+  if (!agentSelect || !modelSelect) return
+
+  const agent = agentSelect.value as string
+  const models = blackboxAgents[agent] || []
+
+  modelSelect.innerHTML = models.map(m =>
+    `<option value="${m.id}">${m.name}</option>`
+  ).join('')
+
+  // Select default model
+  if (blackboxDefaults[agent]) {
+    modelSelect.value = blackboxDefaults[agent]
+  }
+}
+
 /**
  * Open the new session modal (callable from anywhere)
  * @param hintPosition - Optional world position from click for direction-aware placement
@@ -550,6 +610,13 @@ function openNewSessionModal(hintPosition?: { x: number; z: number }): void {
   const modal = document.getElementById('new-session-modal')
   const nameInput = document.getElementById('session-name-input') as HTMLInputElement
   const cwdInput = document.getElementById('session-cwd-input') as HTMLInputElement
+  const repoInput = document.getElementById('session-repo-input') as HTMLInputElement
+  const promptInput = document.getElementById('session-prompt-input') as HTMLTextAreaElement
+  const branchInput = document.getElementById('session-branch-input') as HTMLInputElement
+  // Multi-agent fields
+  const multiRepoInput = document.getElementById('multi-repo-input') as HTMLInputElement
+  const multiPromptInput = document.getElementById('multi-prompt-input') as HTMLTextAreaElement
+  const multiBranchInput = document.getElementById('multi-branch-input') as HTMLInputElement
 
   if (!modal) return
 
@@ -565,14 +632,72 @@ function openNewSessionModal(hintPosition?: { x: number; z: number }): void {
     nameInput.dataset.autoFilled = 'false'
   }
   if (cwdInput) cwdInput.value = ''
+  if (repoInput) repoInput.value = ''
+  if (promptInput) promptInput.value = ''
+  if (branchInput) branchInput.value = ''
+  // Reset multi-agent inputs
+  if (multiRepoInput) multiRepoInput.value = ''
+  if (multiPromptInput) multiPromptInput.value = ''
+  if (multiBranchInput) multiBranchInput.value = ''
+
+  // Fetch Blackbox agents if not loaded
+  if (Object.keys(blackboxAgents).length === 0) {
+    fetchBlackboxAgents()
+  }
+
+  // Set initial mode based on whether Blackbox is enabled
+  setModalMode(blackboxEnabled ? 'blackbox' : 'local')
 
   modal.classList.add('visible')
 
   // Play modal open sound
   soundManager.play('modal_open')
 
-  // Focus directory input after animation (it's now first)
-  setTimeout(() => cwdInput?.focus(), 100)
+  // Focus appropriate input based on mode
+  setTimeout(() => {
+    if (currentModalMode === 'blackbox' || currentModalMode === 'multi') {
+      repoInput?.focus()
+    } else {
+      cwdInput?.focus()
+    }
+  }, 100)
+}
+
+/**
+ * Set the modal mode (blackbox, multi, or local)
+ */
+function setModalMode(mode: 'blackbox' | 'multi' | 'local'): void {
+  currentModalMode = mode
+
+  const blackboxFields = document.getElementById('blackbox-fields')
+  const multiAgentFields = document.getElementById('multi-agent-fields')
+  const localFields = document.getElementById('local-fields')
+  const apiNotice = document.getElementById('blackbox-api-notice')
+  const modeBtns = document.querySelectorAll('.mode-btn')
+  const createBtn = document.getElementById('modal-create') as HTMLButtonElement
+
+  // Update button states
+  modeBtns.forEach(btn => {
+    const btnMode = (btn as HTMLElement).dataset.mode
+    btn.classList.toggle('active', btnMode === mode)
+  })
+
+  // Show/hide field sections
+  if (blackboxFields) blackboxFields.classList.toggle('hidden', mode !== 'blackbox')
+  if (multiAgentFields) multiAgentFields.classList.toggle('hidden', mode !== 'multi')
+  if (localFields) localFields.classList.toggle('hidden', mode !== 'local')
+
+  // Show API notice if Blackbox mode selected but not enabled
+  const needsApiKey = (mode === 'blackbox' || mode === 'multi') && !blackboxEnabled
+  if (apiNotice) {
+    apiNotice.classList.toggle('hidden', !needsApiKey)
+  }
+
+  // Disable create button if API key needed
+  if (createBtn) {
+    createBtn.disabled = needsApiKey
+    createBtn.title = needsApiKey ? 'Set BLACKBOX_API_KEY to enable' : ''
+  }
 }
 
 function setupManagedSessions(): void {
@@ -580,20 +705,71 @@ function setupManagedSessions(): void {
   const modal = document.getElementById('new-session-modal')
   const nameInput = document.getElementById('session-name-input') as HTMLInputElement
   const cwdInput = document.getElementById('session-cwd-input') as HTMLInputElement
-  const defaultCwdEl = document.getElementById('modal-default-cwd')
+  const repoInput = document.getElementById('session-repo-input') as HTMLInputElement
+  const promptInput = document.getElementById('session-prompt-input') as HTMLTextAreaElement
+  const branchInput = document.getElementById('session-branch-input') as HTMLInputElement
+  const agentSelect = document.getElementById('session-agent-select') as HTMLSelectElement
+  const modelSelect = document.getElementById('session-model-select') as HTMLSelectElement
   const cancelBtn = document.getElementById('modal-cancel')
   const createBtn = document.getElementById('modal-create')
 
-  // Default cwd will be set by fetchServerInfo()
+  // Setup mode toggle buttons
+  const modeBtns = document.querySelectorAll('.mode-btn')
+  modeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = (btn as HTMLElement).dataset.mode as 'blackbox' | 'multi' | 'local'
+      if (mode) setModalMode(mode)
+    })
+  })
+
+  // Setup agent select to update models
+  if (agentSelect) {
+    agentSelect.addEventListener('change', updateModelSelect)
+  }
 
   // Setup directory autocomplete
   if (cwdInput) {
     setupDirectoryAutocomplete(cwdInput)
   }
 
-  // Auto-populate name from directory when cwd changes
+  // Browse button - uses File System Access API if available
+  const browseBtn = document.getElementById('browse-directory-btn')
+  if (browseBtn && cwdInput) {
+    browseBtn.addEventListener('click', async () => {
+      // Check if File System Access API is available
+      if ('showDirectoryPicker' in window) {
+        try {
+          // @ts-expect-error - showDirectoryPicker is not in all TS libs
+          const dirHandle = await window.showDirectoryPicker({
+            mode: 'read',
+            startIn: 'documents',
+          })
+          // We can't get the full path from the API for security reasons
+          // But we can get the directory name and prompt user
+          const dirName = dirHandle.name
+          showToast(`Selected: ${dirName}. Note: Browser can't access full path - please type or select from suggestions.`, { type: 'info' })
+          // Focus the input to show autocomplete
+          cwdInput.focus()
+          cwdInput.dispatchEvent(new Event('focus'))
+        } catch (e) {
+          // User cancelled or error
+          if ((e as Error).name !== 'AbortError') {
+            console.error('Directory picker error:', e)
+          }
+        }
+      } else {
+        // Fallback: focus input to show autocomplete with recent projects
+        cwdInput.focus()
+        cwdInput.dispatchEvent(new Event('focus'))
+        showToast('Start typing to search projects, or select from recent projects below', { type: 'info' })
+      }
+    })
+  }
+
+  // Auto-populate name from directory when cwd changes (local mode)
   if (cwdInput && nameInput) {
     cwdInput.addEventListener('input', () => {
+      if (currentModalMode !== 'local') return
       // Only auto-fill if name is empty or was auto-filled before
       if (nameInput.value.trim() === '' || nameInput.dataset.autoFilled === 'true') {
         const cwd = cwdInput.value.trim()
@@ -614,8 +790,37 @@ function setupManagedSessions(): void {
         }
       }
     })
+  }
 
-    // Mark as manually edited when user types in name field
+  // Auto-populate name from repo URL (blackbox mode)
+  if (repoInput && nameInput) {
+    repoInput.addEventListener('input', () => {
+      if (currentModalMode !== 'blackbox') return
+      // Only auto-fill if name is empty or was auto-filled before
+      if (nameInput.value.trim() === '' || nameInput.dataset.autoFilled === 'true') {
+        const repoUrl = repoInput.value.trim()
+        if (repoUrl) {
+          // Extract repo name from URL
+          const match = repoUrl.match(/\/([^/]+?)(\.git)?$/)
+          if (match) {
+            const repoName = match[1]
+            // Check for duplicate names and add suffix if needed
+            let name = repoName
+            let suffix = 1
+            while (state.managedSessions.some(s => s.name === name)) {
+              suffix++
+              name = `${repoName} ${suffix}`
+            }
+            nameInput.value = name
+            nameInput.dataset.autoFilled = 'true'
+          }
+        }
+      }
+    })
+  }
+
+  // Mark as manually edited when user types in name field
+  if (nameInput) {
     nameInput.addEventListener('input', () => {
       nameInput.dataset.autoFilled = 'false'
     })
@@ -626,23 +831,32 @@ function setupManagedSessions(): void {
     currentModalHint = null  // Clear hint when modal closes
   }
 
-  const handleCreate = (): void => {
-    const name = nameInput?.value.trim() || undefined
-    const cwd = cwdInput?.value.trim() || undefined
+  const handleCreate = async (): Promise<void> => {
+    // Read all input values fresh from DOM
+    const freshNameInput = document.getElementById('session-name-input') as HTMLInputElement
+    const freshRepoInput = document.getElementById('session-repo-input') as HTMLInputElement
+    const freshPromptInput = document.getElementById('session-prompt-input') as HTMLTextAreaElement
+    const freshBranchInput = document.getElementById('session-branch-input') as HTMLInputElement
+    const freshAgentSelect = document.getElementById('session-agent-select') as HTMLSelectElement
+    const freshModelSelect = document.getElementById('session-model-select') as HTMLSelectElement
+    const freshCwdInput = document.getElementById('session-cwd-input') as HTMLInputElement
 
-    // Read flag checkboxes
-    const continueCheck = document.getElementById('session-opt-continue') as HTMLInputElement
-    const skipPermsCheck = document.getElementById('session-opt-skip-perms') as HTMLInputElement
-    const chromeCheck = document.getElementById('session-opt-chrome') as HTMLInputElement
-
-    const flags: SessionFlags = {
-      continue: continueCheck?.checked ?? true,
-      skipPermissions: skipPermsCheck?.checked ?? true,
-      chrome: chromeCheck?.checked ?? false,
-    }
-
-    // Capture hint before closing modal (closeModal clears it)
+    const name = freshNameInput?.value.trim() || undefined
     const hintPosition = currentModalHint
+
+    // Read all input values BEFORE closing modal
+    const repoUrl = freshRepoInput?.value.trim()
+    const prompt = freshPromptInput?.value.trim()
+    const branch = freshBranchInput?.value.trim() || 'main'
+    const agent = freshAgentSelect?.value || 'blackbox'
+    const model = freshModelSelect?.value || blackboxDefaults[agent]
+    const cwd = freshCwdInput?.value.trim() || undefined
+
+
+
+    // Play confirm sound
+    soundManager.play('modal_confirm')
+    closeModal()
 
     // Create pending zone immediately for visual feedback
     const pendingId = `pending-${Date.now()}`
@@ -663,11 +877,121 @@ function setupManagedSessions(): void {
     }, ZONE_CREATION_TIMEOUT)
     pendingZoneTimeouts.set(pendingId, timeoutId)
 
-    // Play confirm sound
-    soundManager.play('modal_confirm')
+    if (currentModalMode === 'blackbox') {
+      // Single Agent Blackbox mode
+      if (!repoUrl) {
+        showToast('GitHub repository URL is required', { type: 'error' })
+        return
+      }
+      if (!prompt) {
+        showToast('Task prompt is required', { type: 'error' })
+        return
+      }
 
-    closeModal()
-    createManagedSession(name, cwd, flags, hintPosition ?? undefined, pendingId)
+      createManagedSession(name, undefined, undefined, hintPosition ?? undefined, pendingId, {
+        repoUrl,
+        prompt,
+        branch,
+        agent: agent as 'blackbox' | 'claude' | 'codex' | 'gemini',
+        model,
+      })
+    } else if (currentModalMode === 'multi') {
+      // Multi-Agent mode - create batch with optional judge
+      const multiRepoInput = document.getElementById('multi-repo-input') as HTMLInputElement
+      const multiPromptInput = document.getElementById('multi-prompt-input') as HTMLTextAreaElement
+      const multiBranchInput = document.getElementById('multi-branch-input') as HTMLInputElement
+
+      const repoUrl = multiRepoInput?.value.trim()
+      const prompt = multiPromptInput?.value.trim()
+      const branch = multiBranchInput?.value.trim() || 'main'
+
+      if (!repoUrl) {
+        showToast('GitHub repository URL is required', { type: 'error' })
+        return
+      }
+      if (!prompt) {
+        showToast('Task prompt is required', { type: 'error' })
+        return
+      }
+
+      // Get selected agents with their models
+      const selectedAgents: Array<{ agent: 'blackbox' | 'claude' | 'codex' | 'gemini'; model?: string }> = []
+      if ((document.getElementById('multi-agent-blackbox') as HTMLInputElement)?.checked) {
+        selectedAgents.push({ agent: 'blackbox', model: blackboxDefaults['blackbox'] })
+      }
+      if ((document.getElementById('multi-agent-claude') as HTMLInputElement)?.checked) {
+        selectedAgents.push({ agent: 'claude', model: blackboxDefaults['claude'] })
+      }
+      if ((document.getElementById('multi-agent-codex') as HTMLInputElement)?.checked) {
+        selectedAgents.push({ agent: 'codex', model: blackboxDefaults['codex'] })
+      }
+      if ((document.getElementById('multi-agent-gemini') as HTMLInputElement)?.checked) {
+        selectedAgents.push({ agent: 'gemini', model: blackboxDefaults['gemini'] })
+      }
+
+      if (selectedAgents.length < 2) {
+        showToast('Select at least 2 agents for multi-agent comparison', { type: 'error' })
+        return
+      }
+
+      // Remove the single pending zone - batch API will create zones
+      if (state.scene) {
+        state.scene.removePendingZone(pendingId)
+      }
+      pendingZoneTimeouts.delete(pendingId)
+
+      // Create pending zones for each agent
+      selectedAgents.forEach((agentConfig, index) => {
+        const agentPendingId = `pending-${Date.now()}-${agentConfig.agent}`
+        if (state.scene) {
+          const offsetHint = hintPosition ? {
+            x: hintPosition.x + (index - selectedAgents.length / 2) * 3,
+            z: hintPosition.z
+          } : undefined
+          state.scene.createPendingZone(agentPendingId, offsetHint)
+        }
+      })
+
+      // Create batch via API (Blackbox handles multi-launch analysis automatically)
+      showToast(`Creating ${selectedAgents.length} agent tasks...`, { type: 'info' })
+
+      try {
+        const response = await fetch(`${API_URL}/batches`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            repoUrl,
+            prompt,
+            branch,
+            agents: selectedAgents,
+          }),
+        })
+
+        const data = await response.json()
+        if (data.ok) {
+          showToast(`Batch created with ${selectedAgents.length} agents`, { type: 'success' })
+        } else {
+          showToast(`Failed to create batch: ${data.error}`, { type: 'error' })
+        }
+      } catch (error) {
+        showToast(`Error creating batch: ${error}`, { type: 'error' })
+      }
+    } else {
+      // Local mode - cwd already read above
+
+      // Read flag checkboxes
+      const continueCheck = document.getElementById('session-opt-continue') as HTMLInputElement
+      const skipPermsCheck = document.getElementById('session-opt-skip-perms') as HTMLInputElement
+      const chromeCheck = document.getElementById('session-opt-chrome') as HTMLInputElement
+
+      const flags: SessionFlags = {
+        continue: continueCheck?.checked ?? true,
+        skipPermissions: skipPermsCheck?.checked ?? true,
+        chrome: chromeCheck?.checked ?? false,
+      }
+
+      createManagedSession(name, cwd, flags, hintPosition ?? undefined, pendingId)
+    }
   }
 
   const handleCancel = (): void => {
@@ -708,14 +1032,18 @@ function setupManagedSessions(): void {
     })
   }
 
-  // Enter key in inputs triggers create
+  // Enter key in inputs triggers create (except textarea which needs Enter for newlines)
   const handleEnter = (e: KeyboardEvent): void => {
     if (e.key === 'Enter' && modal?.classList.contains('visible')) {
+      e.preventDefault()
       handleCreate()
     }
   }
   nameInput?.addEventListener('keydown', handleEnter)
   cwdInput?.addEventListener('keydown', handleEnter)
+  repoInput?.addEventListener('keydown', handleEnter)
+  branchInput?.addEventListener('keydown', handleEnter)
+  // Note: promptInput is a textarea, so Enter should add newlines, not submit
 
   // "All Sessions" click handler
   const allItem = document.querySelector('.session-item.all-sessions')
@@ -920,8 +1248,8 @@ function setupClickToPrompt(): void {
       if (!state.scene) return
       const hexes = state.scene.getPaintedHexes()
       const zoneElevations = state.scene.getZoneElevations()
-      localStorage.setItem('vibecraft-hexart', JSON.stringify(hexes))
-      localStorage.setItem('vibecraft-zone-elevations', JSON.stringify(zoneElevations))
+      localStorage.setItem('boxcraft-hexart', JSON.stringify(hexes))
+      localStorage.setItem('boxcraft-zone-elevations', JSON.stringify(zoneElevations))
       const elevCount = Object.keys(zoneElevations).length
       console.log(`Saved ${hexes.length} painted hexes and ${elevCount} zone elevations to localStorage`)
     }, 500)  // Debounce 500ms
@@ -2279,8 +2607,8 @@ function setupSettingsModal(): void {
   drawMode.onClear(() => {
     state.scene?.clearAllPaintedHexes()
     // Clear from localStorage too
-    localStorage.removeItem('vibecraft-hexart')
-    localStorage.removeItem('vibecraft-zone-elevations')
+    localStorage.removeItem('boxcraft-hexart')
+    localStorage.removeItem('boxcraft-zone-elevations')
     console.log('Cleared hex art and zone elevations from localStorage')
   })
 
@@ -2289,7 +2617,7 @@ function setupSettingsModal(): void {
   const portStatus = document.getElementById('settings-port-status')
 
   // Load saved volume from localStorage
-  const savedVolume = localStorage.getItem('vibecraft-volume')
+  const savedVolume = localStorage.getItem('boxcraft-volume')
   if (savedVolume !== null) {
     const vol = parseInt(savedVolume, 10) / 100
     soundManager.setVolume(vol)
@@ -2298,7 +2626,7 @@ function setupSettingsModal(): void {
   }
 
   // Load saved grid size from localStorage
-  const savedGridSize = localStorage.getItem('vibecraft-grid-size')
+  const savedGridSize = localStorage.getItem('boxcraft-grid-size')
   if (savedGridSize !== null) {
     const size = parseInt(savedGridSize, 10)
     state.scene?.setGridRange(size)
@@ -2307,7 +2635,7 @@ function setupSettingsModal(): void {
   }
 
   // Load saved spatial audio setting from localStorage
-  const savedSpatial = localStorage.getItem('vibecraft-spatial-audio')
+  const savedSpatial = localStorage.getItem('boxcraft-spatial-audio')
   if (savedSpatial !== null) {
     const enabled = savedSpatial === 'true'
     soundManager.setSpatialEnabled(enabled)
@@ -2315,7 +2643,7 @@ function setupSettingsModal(): void {
   }
 
   // Load saved streaming mode setting from localStorage
-  const savedStreaming = localStorage.getItem('vibecraft-streaming-mode')
+  const savedStreaming = localStorage.getItem('boxcraft-streaming-mode')
   if (savedStreaming !== null) {
     const enabled = savedStreaming === 'true'
     if (streamingCheckbox) streamingCheckbox.checked = enabled
@@ -2355,7 +2683,7 @@ function setupSettingsModal(): void {
     }
     // Sync streaming mode checkbox
     if (streamingCheckbox) {
-      streamingCheckbox.checked = localStorage.getItem('vibecraft-streaming-mode') === 'true'
+      streamingCheckbox.checked = localStorage.getItem('boxcraft-streaming-mode') === 'true'
     }
     // Sync port input
     if (portInput) portInput.value = String(AGENT_PORT)
@@ -2380,7 +2708,7 @@ function setupSettingsModal(): void {
     const vol = parseInt(volumeSlider.value, 10)
     soundManager.setVolume(vol / 100)
     if (volumeValue) volumeValue.textContent = `${vol}%`
-    localStorage.setItem('vibecraft-volume', String(vol))
+    localStorage.setItem('boxcraft-volume', String(vol))
     // Play tick with pitch based on slider position
     if (state.soundEnabled) {
       soundManager.playSliderTick(vol / 100)
@@ -2392,7 +2720,7 @@ function setupSettingsModal(): void {
     const size = parseInt(gridSizeSlider.value, 10)
     if (gridSizeValue) gridSizeValue.textContent = String(size)
     state.scene?.setGridRange(size)
-    localStorage.setItem('vibecraft-grid-size', String(size))
+    localStorage.setItem('boxcraft-grid-size', String(size))
     // Play tick with pitch based on slider position (normalized 5-80 to 0-1)
     if (state.soundEnabled) {
       soundManager.playSliderTick((size - 5) / 75)
@@ -2403,13 +2731,13 @@ function setupSettingsModal(): void {
   spatialCheckbox?.addEventListener('change', () => {
     const enabled = spatialCheckbox.checked
     soundManager.setSpatialEnabled(enabled)
-    localStorage.setItem('vibecraft-spatial-audio', String(enabled))
+    localStorage.setItem('boxcraft-spatial-audio', String(enabled))
   })
 
   // Streaming mode checkbox
   streamingCheckbox?.addEventListener('change', () => {
     const enabled = streamingCheckbox.checked
-    localStorage.setItem('vibecraft-streaming-mode', String(enabled))
+    localStorage.setItem('boxcraft-streaming-mode', String(enabled))
     applyStreamingMode(enabled)
   })
 
@@ -2417,7 +2745,7 @@ function setupSettingsModal(): void {
   portInput?.addEventListener('change', () => {
     const newPort = parseInt(portInput.value, 10)
     if (newPort && newPort > 0 && newPort <= 65535 && newPort !== AGENT_PORT) {
-      localStorage.setItem('vibecraft-agent-port', String(newPort))
+      localStorage.setItem('boxcraft-agent-port', String(newPort))
       if (confirm(`Port changed to ${newPort}. Reload page to connect to new port?`)) {
         window.location.reload()
       }
@@ -2581,7 +2909,7 @@ function init() {
   }, 100)
 
   // Load saved hex art from localStorage
-  const savedHexArt = localStorage.getItem('vibecraft-hexart')
+  const savedHexArt = localStorage.getItem('boxcraft-hexart')
   if (savedHexArt) {
     try {
       const hexes = JSON.parse(savedHexArt)
@@ -2593,7 +2921,7 @@ function init() {
   }
 
   // Load saved zone elevations from localStorage
-  const savedZoneElevations = localStorage.getItem('vibecraft-zone-elevations')
+  const savedZoneElevations = localStorage.getItem('boxcraft-zone-elevations')
   if (savedZoneElevations) {
     try {
       const elevations = JSON.parse(savedZoneElevations)
@@ -2693,79 +3021,126 @@ function init() {
     // Server is the source of truth for session linking
     claudeToManagedLink.clear()
     for (const session of sessions) {
+      // Determine the zone ID - use claudeSessionId for local sessions, taskId for Blackbox tasks
+      const zoneId = session.claudeSessionId || (session.taskId ? `task-${session.taskId}` : null)
+      
       if (session.claudeSessionId) {
         claudeToManagedLink.set(session.claudeSessionId, session.id)
+      }
 
-        // Proactively create zone if it doesn't exist yet
-        // This handles sessions that have no recent events in history
-        if (state.scene && !state.scene.zones.has(session.claudeSessionId)) {
-          // Use saved position if available
-          let hintPosition: { x: number; z: number } | undefined
-          if (session.zonePosition) {
-            const cartesian = state.scene.hexGrid.axialToCartesian(session.zonePosition)
-            hintPosition = { x: cartesian.x, z: cartesian.z }
-            console.log(`Restoring zone for "${session.name}" at saved position`, session.zonePosition)
-          } else {
-            console.log(`Creating zone for session "${session.name}" (no recent events in history)`)
-          }
-          const zone = state.scene.createZone(session.claudeSessionId, { hintPosition })
+      // Create zone for any session that has an identifier (local or Blackbox)
+      if (zoneId && state.scene && !state.scene.zones.has(zoneId)) {
+        // Use saved position if available
+        let hintPosition: { x: number; z: number } | undefined
+        if (session.zonePosition) {
+          const cartesian = state.scene.hexGrid.axialToCartesian(session.zonePosition)
+          hintPosition = { x: cartesian.x, z: cartesian.z }
+          console.log(`Restoring zone for "${session.name}" at saved position`, session.zonePosition)
+        } else {
+          console.log(`Creating zone for session "${session.name}" (${session.taskId ? 'Blackbox task' : 'no recent events'})`)
+        }
+        const zone = state.scene.createZone(zoneId, { hintPosition })
 
-          // Play zone creation sound
-          if (state.soundEnabled) {
-            soundManager.play('zone_create', { zoneId: session.claudeSessionId })
-          }
-
-          // Create Claude entity for this zone
-          const claude = new Claude(state.scene, {
-            color: zone.color,
-            startStation: 'center',
-          })
-          const centerStation = zone.stations.get('center')
-          if (centerStation) {
-            claude.mesh.position.copy(centerStation.position)
-          }
-
-          const subagents = new SubagentManager(state.scene)
-
-          const sessionState: SessionState = {
-            claude,
-            subagents,
-            zone,
-            color: zone.color,
-            stats: {
-              toolsUsed: 0,
-              filesTouched: new Set(),
-              activeSubagents: 0,
-            },
-          }
-          state.sessions.set(session.claudeSessionId, sessionState)
-
-          // Update zone label with session name
-          const keybindIndex = sessions.indexOf(session)
-          const keybind = keybindIndex >= 0 ? getSessionKeybind(keybindIndex) : undefined
-          state.scene.updateZoneLabel(session.claudeSessionId, session.name, keybind)
+        // Play zone creation sound
+        if (state.soundEnabled) {
+          soundManager.play('zone_create', { zoneId })
         }
 
-        // Update zone floor status based on session status
-        if (state.scene) {
-          // Map managed session status to zone status
-          const zoneStatus = session.status === 'working' ? 'working'
+        // Create Claude entity for this zone
+        const claude = new Claude(state.scene, {
+          color: zone.color,
+          startStation: 'center',
+        })
+        const centerStation = zone.stations.get('center')
+        if (centerStation) {
+          claude.mesh.position.copy(centerStation.position)
+        }
+
+        const subagents = new SubagentManager(state.scene)
+
+        const sessionState: SessionState = {
+          claude,
+          subagents,
+          zone,
+          color: zone.color,
+          stats: {
+            toolsUsed: 0,
+            filesTouched: new Set(),
+            activeSubagents: 0,
+          },
+        }
+        state.sessions.set(zoneId, sessionState)
+
+        // Update zone label with session name
+        const keybindIndex = sessions.indexOf(session)
+        const keybind = keybindIndex >= 0 ? getSessionKeybind(keybindIndex) : undefined
+        state.scene.updateZoneLabel(zoneId, session.name, keybind)
+        
+        // Remove pending zone if this is a Blackbox task
+        if (session.taskId) {
+          const pendingZoneId = pendingZonesToCleanup.get(session.name)
+          if (pendingZoneId) {
+            state.scene.removePendingZone(pendingZoneId)
+            pendingZonesToCleanup.delete(session.name)
+            const timeoutId = pendingZoneTimeouts.get(pendingZoneId)
+            if (timeoutId) {
+              clearTimeout(timeoutId)
+              pendingZoneTimeouts.delete(pendingZoneId)
+            }
+          }
+        }
+      }
+
+      // Update zone floor status based on session status
+      if (zoneId && state.scene && state.scene.zones.has(zoneId)) {
+        // Map managed session status to zone status
+        // For Blackbox tasks, also consider progress
+        let zoneStatus: 'idle' | 'working' | 'waiting' | 'attention' | 'offline'
+        if (session.taskId) {
+          // Blackbox task status mapping
+          const progress = session.progress ?? 0
+          if (session.status === 'offline' || session.status === 'error') {
+            zoneStatus = 'offline'
+          } else if (progress > 0 && progress < 100) {
+            zoneStatus = 'working'
+          } else if (progress === 100) {
+            zoneStatus = 'idle'
+          } else {
+            zoneStatus = 'waiting'
+          }
+        } else {
+          // Local session status mapping
+          zoneStatus = session.status === 'working' ? 'working'
             : session.status === 'waiting' ? 'waiting'
             : session.status === 'offline' ? 'offline'
             : 'idle'
-          state.scene.setZoneStatus(session.claudeSessionId, zoneStatus)
+        }
+        state.scene.setZoneStatus(zoneId, zoneStatus)
+
+        // Update progress for Blackbox tasks
+        if (session.taskId && session.progress !== undefined) {
+          state.scene.updateZoneProgress(zoneId, session.progress, session.batchId)
+        }
+
+        // Update winner status (from Blackbox multi-launch analysis)
+        if (session.isWinner !== undefined) {
+          state.scene.setZoneWinner(zoneId, session.isWinner)
         }
       }
     }
 
     // Clean up orphaned zones (zones not linked to any managed session)
     if (state.scene) {
-      const activeClaudeIds = new Set(
-        sessions.map(s => s.claudeSessionId).filter(Boolean)
-      )
+      // Build set of all active zone IDs (both local and Blackbox)
+      const activeZoneIds = new Set<string>()
+      for (const s of sessions) {
+        if (s.claudeSessionId) activeZoneIds.add(s.claudeSessionId)
+        if (s.taskId) activeZoneIds.add(`task-${s.taskId}`)
+      }
+      
       const zonesToDelete: string[] = []
       for (const [zoneId] of state.scene.zones) {
-        if (!activeClaudeIds.has(zoneId)) {
+        if (!activeZoneIds.has(zoneId)) {
           zonesToDelete.push(zoneId)
         }
       }
@@ -2823,7 +3198,7 @@ function init() {
     // Restore or auto-select session
     if (!state.selectedManagedSession && sessions.length > 0) {
       // Try to restore from localStorage
-      const savedSessionId = localStorage.getItem('vibecraft-selected-session')
+      const savedSessionId = localStorage.getItem('boxcraft-selected-session')
       const savedSession = savedSessionId ? sessions.find(s => s.id === savedSessionId) : null
 
       if (savedSession) {
@@ -2958,9 +3333,9 @@ function init() {
   setupNotConnectedOverlay()
 
   // Setup voice input
-  // On vibecraft.sh: voice is always available via cloud proxy, set up immediately
+  // On boxcraft.sh: voice is always available via cloud proxy, set up immediately
   // On localhost: needs client connected and voice enabled on server
-  const isHostedSite = window.location.hostname === 'vibecraft.sh'
+  const isHostedSite = window.location.hostname === 'boxcraft.sh'
   const voiceControl = document.getElementById('voice-control')
 
   if (isHostedSite) {
@@ -3018,7 +3393,7 @@ function init() {
   // Check for updates (non-blocking)
   checkForUpdates()
 
-  console.log('Vibecraft initialized (multi-session enabled)')
+  console.log('Boxcraft initialized (multi-session enabled)')
 }
 
 // ============================================================================
@@ -3043,4 +3418,4 @@ window.addEventListener('load', init)
 window.addEventListener('beforeunload', cleanup)
 
 // Export for debugging
-;(window as unknown as { vibecraft: AppState }).vibecraft = state
+;(window as unknown as { boxcraft: AppState }).boxcraft = state

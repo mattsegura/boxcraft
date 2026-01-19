@@ -36,3 +36,5 @@ npm-debug.log*
 bin/vibecraft
 scripts/test-*.sh
 todo.txt
+.blackboxcli/
+videos/

@@ -117,10 +117,40 @@ function renderContent(data: ZoneInfoData): void {
         <span class="zone-info-label">Directory</span>
         <span class="zone-info-value zone-info-mono">${escapeHtml(s.cwd || '~')}</span>
       </div>
+      ${s.tmuxSession ? `
       <div class="zone-info-row">
         <span class="zone-info-label">tmux Session</span>
         <span class="zone-info-value zone-info-mono">${escapeHtml(s.tmuxSession)}</span>
       </div>
+      ` : ''}
+      ${s.taskId ? `
+      <div class="zone-info-row">
+        <span class="zone-info-label">Blackbox Task</span>
+        <span class="zone-info-value zone-info-mono">${escapeHtml(s.taskId)}</span>
+      </div>
+      <div class="zone-info-row">
+        <span class="zone-info-label">Agent</span>
+        <span class="zone-info-value">${escapeHtml(s.agent || 'blackbox')} / ${escapeHtml(s.model || 'default')}</span>
+      </div>
+      ${s.progress !== undefined ? `
+      <div class="zone-info-row">
+        <span class="zone-info-label">Progress</span>
+        <span class="zone-info-value">${s.progress}%</span>
+      </div>
+      ` : ''}
+      ${s.prUrl ? `
+      <div class="zone-info-row">
+        <span class="zone-info-label">Pull Request</span>
+        <span class="zone-info-value"><a href="${escapeHtml(s.prUrl)}" target="_blank" rel="noopener">${escapeHtml(s.prUrl)}</a></span>
+      </div>
+      ` : ''}
+      ${s.sandboxUrl ? `
+      <div class="zone-info-row">
+        <span class="zone-info-label">Sandbox</span>
+        <span class="zone-info-value"><a href="${escapeHtml(s.sandboxUrl)}" target="_blank" rel="noopener">Open Sandbox</a></span>
+      </div>
+      ` : ''}
+      ` : ''}
       <div class="zone-info-row">
         <span class="zone-info-label">Created</span>
         <span class="zone-info-value">${formatTimeAgo(s.createdAt)}</span>

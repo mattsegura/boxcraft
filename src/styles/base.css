@@ -1,4 +1,11 @@
 /* Base styles - reset, layout, common utilities */
+/* ╔══════════════════════════════════════════════════════════════════════════╗ */
+/* ║  BLACK & WHITE GLOWY ASCII THEME - BOXCRAFT                             ║ */
+/* ║  A retro-futuristic terminal aesthetic with neon white glow              ║ */
+/* ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
 
 * {
   margin: 0;
@@ -6,11 +13,122 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* ═══════════════════════════════════════════════════════════════════════ */
+  /* ASCII Glow Theme Colors - Deep Black with Neon White                    */
+  /* ═══════════════════════════════════════════════════════════════════════ */
+  --bg-primary: #000000;
+  --bg-secondary: #050505;
+  --bg-tertiary: #0a0a0a;
+  --bg-elevated: #0f0f0f;
+  --bg-panel: #030303;
+  
+  --text-primary: #ffffff;
+  --text-secondary: #b0b0b0;
+  --text-muted: #707070;
+  --text-dim: #404040;
+  --text-glow: #ffffff;
+  
+  /* Border colors with glow potential */
+  --border-primary: rgba(255, 255, 255, 0.12);
+  --border-glow: rgba(255, 255, 255, 0.35);
+  --border-bright: rgba(255, 255, 255, 0.6);
+  --border-neon: rgba(255, 255, 255, 0.9);
+  
+  /* ═══════════════════════════════════════════════════════════════════════ */
+  /* Glow Effects - Layered for depth                                        */
+  /* ═══════════════════════════════════════════════════════════════════════ */
+  --glow-white: 
+    0 0 5px rgba(255, 255, 255, 0.6),
+    0 0 10px rgba(255, 255, 255, 0.4),
+    0 0 20px rgba(255, 255, 255, 0.2),
+    0 0 40px rgba(255, 255, 255, 0.1);
+  
+  --glow-white-soft: 
+    0 0 3px rgba(255, 255, 255, 0.4),
+    0 0 8px rgba(255, 255, 255, 0.2);
+  
+  --glow-white-intense: 
+    0 0 5px rgba(255, 255, 255, 1),
+    0 0 10px rgba(255, 255, 255, 0.8),
+    0 0 20px rgba(255, 255, 255, 0.6),
+    0 0 40px rgba(255, 255, 255, 0.4),
+    0 0 80px rgba(255, 255, 255, 0.2);
+  
+  --glow-neon: 
+    0 0 2px #fff,
+    0 0 5px #fff,
+    0 0 10px rgba(255, 255, 255, 0.8),
+    0 0 20px rgba(255, 255, 255, 0.5),
+    0 0 35px rgba(255, 255, 255, 0.3);
+  
+  --glow-text: 
+    0 0 2px rgba(255, 255, 255, 0.8),
+    0 0 5px rgba(255, 255, 255, 0.5),
+    0 0 10px rgba(255, 255, 255, 0.3);
+  
+  --glow-border: 
+    0 0 5px rgba(255, 255, 255, 0.3),
+    0 0 10px rgba(255, 255, 255, 0.15),
+    inset 0 0 5px rgba(255, 255, 255, 0.05);
+  
+  /* Accent colors - monochrome variations */
+  --accent-success: #ffffff;
+  --accent-warning: #909090;
+  --accent-error: #606060;
+  --accent-info: #d0d0d0;
+  
+  /* ═══════════════════════════════════════════════════════════════════════ */
+  /* Typography                                                               */
+  /* ═══════════════════════════════════════════════════════════════════════ */
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+  --font-display: 'Share Tech Mono', 'JetBrains Mono', monospace;
+  
+  /* ASCII Box Drawing Characters */
+  --ascii-corner-tl: '┌';
+  --ascii-corner-tr: '┐';
+  --ascii-corner-bl: '└';
+  --ascii-corner-br: '┘';
+  --ascii-line-h: '─';
+  --ascii-line-v: '│';
+  --ascii-cross: '┼';
+  --ascii-t-down: '┬';
+  --ascii-t-up: '┴';
+  --ascii-t-right: '├';
+  --ascii-t-left: '┤';
+}
+
 body {
-  font-family: system-ui, -apple-system, sans-serif;
-  background: #0a0a0a;
-  color: #fff;
+  font-family: var(--font-mono);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   overflow: hidden;
+  letter-spacing: 0.02em;
+  
+  /* CRT Scanline effect */
+  background-image: 
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255, 255, 255, 0.015) 2px,
+      rgba(255, 255, 255, 0.015) 4px
+    ),
+    /* Subtle vignette */
+    radial-gradient(
+      ellipse at center,
+      transparent 0%,
+      rgba(0, 0, 0, 0.3) 100%
+    );
+  
+  /* Subtle CRT flicker */
+  animation: crtFlicker 0.1s infinite;
+}
+
+/* CRT screen flicker - very subtle */
+@keyframes crtFlicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.995; }
 }
 
 #app {
@@ -24,7 +142,10 @@ body {
   width: 60%;
   height: 100%;
   position: relative;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid var(--border-glow);
+  box-shadow: 
+    inset -2px 0 0 var(--border-primary),
+    inset -1px 0 20px rgba(255, 255, 255, 0.02);
 }
 
 #canvas-container {
@@ -38,14 +159,122 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #111;
+  background: var(--bg-panel);
   position: relative;
+  /* Subtle inner glow */
+  box-shadow: inset 0 0 60px rgba(255, 255, 255, 0.02);
 }
 
-/* Common animations */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* ASCII Box Drawing Characters for borders                                    */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.ascii-border {
+  border: 1px solid var(--border-glow);
+  position: relative;
+  box-shadow: var(--glow-border);
+}
+
+.ascii-border::before {
+  content: '┌';
+  position: absolute;
+  top: -8px;
+  left: -1px;
+  color: var(--text-secondary);
+  text-shadow: var(--glow-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.ascii-border::after {
+  content: '┐';
+  position: absolute;
+  top: -8px;
+  right: -1px;
+  color: var(--text-secondary);
+  text-shadow: var(--glow-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Full ASCII box with all corners */
+.ascii-box {
+  border: 1px solid var(--border-glow);
+  position: relative;
+  box-shadow: var(--glow-border);
+}
+
+.ascii-box::before {
+  content: '┌' attr(data-title) '┐';
+  position: absolute;
+  top: -10px;
+  left: 8px;
+  color: var(--text-secondary);
+  text-shadow: var(--glow-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-primary);
+  padding: 0 8px;
+  letter-spacing: 2px;
+}
+
+/* ASCII divider line */
+.ascii-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  margin: 12px 0;
+}
+
+.ascii-divider::before,
+.ascii-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-glow), transparent);
+}
+
+/* Terminal prompt style */
+.terminal-prompt::before {
+  content: '> ';
+  color: var(--text-glow);
+  text-shadow: var(--glow-text);
+  animation: cursorBlink 1s step-end infinite;
+}
+
+/* Blinking cursor */
+.cursor-blink::after {
+  content: '█';
+  animation: cursorBlink 1s step-end infinite;
+  color: var(--text-glow);
+  text-shadow: var(--glow-text);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Common Animations - ASCII Terminal Style                                    */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInGlow {
+  from { 
+    opacity: 0; 
+    transform: translateY(8px);
+    text-shadow: none;
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0);
+    text-shadow: var(--glow-white-soft);
+  }
 }
 
 @keyframes pulse {
@@ -53,7 +282,334 @@ body {
   50% { opacity: 0.5; }
 }
 
+@keyframes pulseGlow {
+  0%, 100% { 
+    opacity: 1;
+    box-shadow: var(--glow-white-soft);
+  }
+  50% { 
+    opacity: 0.8;
+    box-shadow: var(--glow-white);
+  }
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+@keyframes glowPulse {
+  0%, 100% { 
+    text-shadow: var(--glow-white-soft);
+    opacity: 1;
+  }
+  50% { 
+    text-shadow: var(--glow-neon);
+    opacity: 0.95;
+  }
+}
+
+@keyframes borderGlow {
+  0%, 100% { 
+    border-color: var(--border-primary);
+    box-shadow: 0 0 5px rgba(255, 255, 255, 0.1);
+  }
+  50% { 
+    border-color: var(--border-bright);
+    box-shadow: var(--glow-white-soft);
+  }
+}
+
+@keyframes neonFlicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+    text-shadow: var(--glow-neon);
+    opacity: 1;
+  }
+  20%, 24%, 55% {
+    text-shadow: none;
+    opacity: 0.8;
+  }
+}
+
+@keyframes cursorBlink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes typewriter {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+@keyframes matrixRain {
+  0% { 
+    transform: translateY(-100%);
+    opacity: 1;
+  }
+  100% { 
+    transform: translateY(100vh);
+    opacity: 0;
+  }
+}
+
+@keyframes glitchShift {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Glowing Text Utilities                                                      */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.glow-text {
+  text-shadow: var(--glow-white);
+}
+
+.glow-text-soft {
+  text-shadow: var(--glow-white-soft);
+}
+
+.glow-text-intense {
+  text-shadow: var(--glow-white-intense);
+  animation: glowPulse 2s ease-in-out infinite;
+}
+
+.glow-text-neon {
+  text-shadow: var(--glow-neon);
+  color: var(--text-glow);
+}
+
+.glow-text-flicker {
+  animation: neonFlicker 3s infinite;
+}
+
+/* Glowing border utilities */
+.glow-border {
+  border-color: var(--border-bright);
+  box-shadow: var(--glow-border);
+}
+
+.glow-border-intense {
+  border-color: var(--border-neon);
+  box-shadow: var(--glow-white);
+}
+
+.glow-border-pulse {
+  animation: borderGlow 2s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* ASCII-style Scrollbar                                                       */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 10px;
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-primary);
+  box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--text-dim) 0%, var(--bg-tertiary) 100%);
+  border: 1px solid var(--border-glow);
+  box-shadow: inset 0 0 3px rgba(255, 255, 255, 0.1);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--text-muted) 0%, var(--text-dim) 100%);
+  border-color: var(--border-bright);
+  box-shadow: var(--glow-white-soft);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg-primary);
+}
+
+/* Selection styling */
+::selection {
+  background: rgba(255, 255, 255, 0.25);
+  color: var(--text-primary);
+  text-shadow: var(--glow-white-soft);
+}
+
+/* Focus styling */
+:focus {
+  outline: 1px solid var(--border-bright);
+  outline-offset: 2px;
+  box-shadow: var(--glow-white-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--border-neon);
+  outline-offset: 2px;
+  box-shadow: var(--glow-white);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Code/Monospace Elements                                                     */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+code, pre {
+  font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+}
+
+pre {
+  position: relative;
+  overflow-x: auto;
+}
+
+pre::before {
+  content: '┌─ CODE ─┐';
+  position: absolute;
+  top: -10px;
+  left: 10px;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg-tertiary);
+  padding: 0 4px;
+  letter-spacing: 1px;
+}
+
+kbd {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 0;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-tertiary) 100%);
+  border: 1px solid var(--border-glow);
+  box-shadow: 
+    0 2px 0 var(--bg-primary),
+    var(--glow-white-soft);
+  text-shadow: var(--glow-white-soft);
+}
+
+kbd:hover {
+  box-shadow: 
+    0 2px 0 var(--bg-primary),
+    var(--glow-white);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Button Base Styles                                                          */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+button {
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+/* Primary glowing button */
+.btn-glow {
+  background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.05) 100%);
+  border: 1px solid var(--border-bright);
+  color: var(--text-primary);
+  padding: 10px 20px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  text-shadow: var(--glow-white-soft);
+  box-shadow: var(--glow-border);
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-glow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: left 0.5s ease;
+}
+
+.btn-glow:hover {
+  border-color: var(--border-neon);
+  box-shadow: var(--glow-white);
+  text-shadow: var(--glow-neon);
+}
+
+.btn-glow:hover::before {
+  left: 100%;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Input Base Styles                                                           */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+input, textarea, select {
+  font-family: var(--font-mono);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  transition: all 0.15s ease;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--border-bright);
+  box-shadow: var(--glow-white-soft);
+  outline: none;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/* Utility Classes                                                             */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.uppercase {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.display-font {
+  font-family: var(--font-display);
+}
+
+.no-select {
+  user-select: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.invisible {
+  visibility: hidden;
+}
+
+/* Grayscale filter for icons */
+.grayscale {
+  filter: grayscale(100%);
+}
+
+.grayscale:hover {
+  filter: grayscale(50%);
 }

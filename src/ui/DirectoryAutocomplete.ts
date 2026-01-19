@@ -6,9 +6,10 @@
  */
 
 // Injected by Vite at build time
-declare const __VIBECRAFT_DEFAULT_PORT__: number
-const API_PORT = __VIBECRAFT_DEFAULT_PORT__
-const API_URL = `http://localhost:${API_PORT}`
+declare const __BOXCRAFT_DEFAULT_PORT__: number
+const API_PORT = __BOXCRAFT_DEFAULT_PORT__
+// In dev mode, use the Vite proxy; in production, use direct URL
+const API_URL = import.meta.env.DEV ? '/api' : `http://localhost:${API_PORT}`
 
 interface AutocompleteResult {
   path: string
@@ -37,15 +38,16 @@ export function setupDirectoryAutocomplete(
       top: 100%;
       left: 0;
       right: 0;
-      max-height: 200px;
+      max-height: 250px;
       overflow-y: auto;
-      background: rgba(20, 20, 25, 0.98);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.98);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 0;
       margin-top: 4px;
       display: none;
       z-index: 1001;
       backdrop-filter: blur(8px);
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
     `
     // Ensure parent has relative positioning
     const parent = input.parentElement
@@ -56,10 +58,28 @@ export function setupDirectoryAutocomplete(
     return dropdown
   }
 
-  const renderDropdown = () => {
+  const renderDropdown = (showEmpty = false) => {
     const dd = createDropdown()
     if (results.length === 0) {
-      dd.style.display = 'none'
+      if (showEmpty && input.value.trim() === '') {
+        // Show helpful message when no projects and input is empty
+        dd.innerHTML = `
+          <div class="dir-empty" style="
+            padding: 16px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.5);
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-size: 12px;
+          ">
+            <div style="margin-bottom: 8px; color: rgba(255, 255, 255, 0.7);">No recent projects</div>
+            <div>Type a path like <code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 0;">~/projects/myapp</code></div>
+            <div style="margin-top: 4px;">or <code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 0;">/Users/name/code</code></div>
+          </div>
+        `
+        dd.style.display = 'block'
+      } else {
+        dd.style.display = 'none'
+      }
       return
     }
 
@@ -79,35 +99,39 @@ export function setupDirectoryAutocomplete(
       `
     }).join('')
 
-    // Style items
+    // Style items - ASCII theme
     dd.querySelectorAll('.dir-item').forEach((item) => {
       const el = item as HTMLElement
       el.style.cssText = `
-        padding: 8px 12px;
+        padding: 10px 14px;
         cursor: pointer;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 4px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        transition: background 0.1s;
       `
       if (el.classList.contains('selected')) {
-        el.style.background = 'rgba(74, 200, 232, 0.2)'
+        el.style.background = 'rgba(255, 255, 255, 0.15)'
+        el.style.boxShadow = 'inset 0 0 10px rgba(255, 255, 255, 0.1)'
       }
     })
 
     dd.querySelectorAll('.dir-name').forEach((el) => {
       (el as HTMLElement).style.cssText = `
-        color: #4ac8e8;
-        font-family: ui-monospace, monospace;
+        color: #ffffff;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
         font-weight: 600;
         font-size: 13px;
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
       `
     })
 
     dd.querySelectorAll('.dir-path').forEach((el) => {
       (el as HTMLElement).style.cssText = `
-        color: rgba(255, 255, 255, 0.4);
+        color: rgba(255, 255, 255, 0.5);
         font-size: 11px;
-        font-family: ui-monospace, monospace;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
       `
     })
 
@@ -142,11 +166,16 @@ export function setupDirectoryAutocomplete(
       if (data.ok && Array.isArray(data.results)) {
         results = data.results
         selectedIndex = 0
-        renderDropdown()
+        renderDropdown(query === '')  // Show empty state hint when query is empty
       }
     } catch (e) {
       // Silently fail - autocomplete is a nice-to-have
       console.error('Autocomplete fetch error:', e)
+      // Still show empty state on error if input is empty
+      if (input.value.trim() === '') {
+        results = []
+        renderDropdown(true)
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 /**
- * Vibecraft WebSocket Server
+ * Boxcraft WebSocket Server
  *
  * This server:
  * 1. Watches the events JSONL file for changes
@@ -33,11 +33,22 @@ import type {
   TextTile,
   CreateTextTileRequest,
   UpdateTextTileRequest,
+  MultiAgentBatch,
 } from '../shared/types.js'
 import { DEFAULTS } from '../shared/defaults.js'
 import { GitStatusManager } from './GitStatusManager.js'
 import { ProjectsManager } from './ProjectsManager.js'
 import { fileURLToPath } from 'url'
+import {
+  BlackboxAPI,
+  getBlackboxAPI,
+  isBlackboxEnabled,
+  mapTaskStatusToSessionStatus,
+  AGENT_MODELS,
+  DEFAULT_MODELS,
+  type BlackboxAgent,
+  type BlackboxTask,
+} from './BlackboxAPI.js'
 
 // ============================================================================
 // Version (read from package.json)
@@ -79,14 +90,14 @@ function expandHome(path: string): string {
   return path
 }
 
-const PORT = parseInt(process.env.VIBECRAFT_PORT ?? String(DEFAULTS.SERVER_PORT), 10)
-const EVENTS_FILE = resolve(expandHome(process.env.VIBECRAFT_EVENTS_FILE ?? DEFAULTS.EVENTS_FILE))
-const PENDING_PROMPT_FILE = resolve(expandHome(process.env.VIBECRAFT_PROMPT_FILE ?? '~/.vibecraft/data/pending-prompt.txt'))
-const MAX_EVENTS = parseInt(process.env.VIBECRAFT_MAX_EVENTS ?? String(DEFAULTS.MAX_EVENTS), 10)
-const DEBUG = process.env.VIBECRAFT_DEBUG === 'true'
-const TMUX_SESSION = process.env.VIBECRAFT_TMUX_SESSION ?? DEFAULTS.TMUX_SESSION
-const SESSIONS_FILE = resolve(expandHome(process.env.VIBECRAFT_SESSIONS_FILE ?? DEFAULTS.SESSIONS_FILE))
-const TILES_FILE = resolve(expandHome(process.env.VIBECRAFT_TILES_FILE ?? '~/.vibecraft/data/tiles.json'))
+const PORT = parseInt(process.env.BOXCRAFT_PORT ?? String(DEFAULTS.SERVER_PORT), 10)
+const EVENTS_FILE = resolve(expandHome(process.env.BOXCRAFT_EVENTS_FILE ?? DEFAULTS.EVENTS_FILE))
+const PENDING_PROMPT_FILE = resolve(expandHome(process.env.BOXCRAFT_PROMPT_FILE ?? '~/.boxcraft/data/pending-prompt.txt'))
+const MAX_EVENTS = parseInt(process.env.BOXCRAFT_MAX_EVENTS ?? String(DEFAULTS.MAX_EVENTS), 10)
+const DEBUG = process.env.BOXCRAFT_DEBUG === 'true'
+const TMUX_SESSION = process.env.BOXCRAFT_TMUX_SESSION ?? DEFAULTS.TMUX_SESSION
+const SESSIONS_FILE = resolve(expandHome(process.env.BOXCRAFT_SESSIONS_FILE ?? DEFAULTS.SESSIONS_FILE))
+const TILES_FILE = resolve(expandHome(process.env.BOXCRAFT_TILES_FILE ?? '~/.boxcraft/data/tiles.json'))
 
 /** Time before a "working" session auto-transitions to idle (failsafe for missed events) */
 const WORKING_TIMEOUT_MS = 120_000 // 2 minutes
@@ -133,7 +144,7 @@ function isOriginAllowed(origin: string | undefined): boolean {
     }
 
     // Production: exact hostname match with HTTPS required
-    if (url.hostname === 'vibecraft.sh' && url.protocol === 'https:') {
+    if (url.hostname === 'boxcraft.sh' && url.protocol === 'https:') {
       return true
     }
 
@@ -227,7 +238,7 @@ async function sendToTmuxSafe(tmuxSession: string, text: string): Promise<void> 
   validateTmuxSession(tmuxSession)
 
   // Create temp file with cryptographically secure random name
-  const tempFile = `/tmp/vibecraft-prompt-${Date.now()}-${randomBytes(16).toString('hex')}.txt`
+  const tempFile = `/tmp/boxcraft-prompt-${Date.now()}-${randomBytes(16).toString('hex')}.txt`
   writeFileSync(tempFile, text)
 
   try {
@@ -297,6 +308,9 @@ const bypassWarningHandled = new Set<string>()
 
 /** Managed sessions registry */
 const managedSessions = new Map<string, ManagedSession>()
+
+/** Multi-agent batches (for judge system) */
+const multiAgentBatches = new Map<string, MultiAgentBatch>()
 
 /** Text tiles (grid labels) */
 const textTiles = new Map<string, TextTile>()
@@ -448,7 +462,8 @@ function startTokenPolling(): void {
   // Poll every 2 seconds - poll all managed sessions
   setInterval(() => {
     for (const session of managedSessions.values()) {
-      if (session.status !== 'offline') {
+      // Only poll tmux sessions, not Blackbox tasks
+      if (session.status !== 'offline' && session.tmuxSession) {
         pollTokens(session.tmuxSession)
       }
     }
@@ -693,7 +708,8 @@ function startPermissionPolling(): void {
   // Poll every 1 second (more frequent than tokens since permissions are time-sensitive)
   setInterval(() => {
     for (const session of managedSessions.values()) {
-      if (session.status !== 'offline') {
+      // Only poll tmux sessions, not Blackbox tasks
+      if (session.status !== 'offline' && session.tmuxSession) {
         pollPermissions(session.id, session.tmuxSession)
       }
     }
@@ -712,6 +728,12 @@ function sendPermissionResponse(sessionId: string, optionNumber: string): boolea
     return false
   }
 
+  // Blackbox tasks don't have permission prompts
+  if (!session.tmuxSession) {
+    log(`Cannot send permission response: session ${sessionId} is not a tmux session`)
+    return false
+  }
+
   // Validate it's a number
   if (!/^\d+$/.test(optionNumber)) {
     log(`Invalid permission response: ${optionNumber} (expected number)`)
@@ -726,8 +748,10 @@ function sendPermissionResponse(sessionId: string, optionNumber: string): boolea
     return false
   }
 
+  const tmuxSession = session.tmuxSession
+
   // Send the option number to tmux - Claude Code expects just the number
-  execFile('tmux', ['send-keys', '-t', session.tmuxSession, optionNumber], EXEC_OPTIONS, (error) => {
+  execFile('tmux', ['send-keys', '-t', tmuxSession, optionNumber], EXEC_OPTIONS, (error: Error | null) => {
     if (error) {
       log(`Failed to send permission response: ${error.message}`)
       return
@@ -760,13 +784,94 @@ function shortId(): string {
 
 /**
  * Create a new managed session
+ * Supports both Blackbox API mode and legacy tmux mode
  */
-function createSession(options: CreateSessionRequest = {}): Promise<ManagedSession> {
+async function createSession(options: CreateSessionRequest = {}): Promise<ManagedSession> {
+  const id = randomUUID()
+  sessionCounter++
+  const name = options.name || `Agent ${sessionCounter}`
+
+  // Check if using Blackbox API mode
+  const blackboxApi = getBlackboxAPI()
+  const useBlackbox = blackboxApi && options.repoUrl && options.prompt
+
+  if (useBlackbox) {
+    // ========== Blackbox API Mode ==========
+    return createBlackboxSession(blackboxApi, id, name, options)
+  } else {
+    // ========== Legacy tmux Mode ==========
+    return createTmuxSession(id, name, options)
+  }
+}
+
+/**
+ * Create a session using Blackbox API
+ */
+async function createBlackboxSession(
+  api: BlackboxAPI,
+  id: string,
+  name: string,
+  options: CreateSessionRequest
+): Promise<ManagedSession> {
+  const agent = options.agent || 'blackbox'
+  const model = options.model || DEFAULT_MODELS[agent]
+
+  log(`Creating Blackbox task: ${name} (agent: ${agent}, model: ${model})`)
+
+  try {
+    const task = await api.createTask({
+      prompt: options.prompt!,
+      repoUrl: options.repoUrl,
+      selectedBranch: options.branch || 'main',
+      selectedAgent: agent,
+      selectedModel: model,
+    })
+
+    const session: ManagedSession = {
+      id,
+      name,
+      status: mapTaskStatusToSessionStatus(task.status),
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+      cwd: options.cwd,
+      // Blackbox-specific fields
+      taskId: task.id,
+      repoUrl: options.repoUrl,
+      branch: options.branch || 'main',
+      agent,
+      model,
+      progress: task.progress,
+      taskLogs: task.logs,
+    }
+
+    managedSessions.set(id, session)
+    log(`Created Blackbox session: ${name} (${id.slice(0, 8)}) -> task:${task.id}`)
+
+    // Start polling for task status
+    startTaskPolling(id, task.id)
+
+    // Broadcast and persist
+    broadcastSessions()
+    saveSessions()
+
+    return session
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    log(`Failed to create Blackbox task: ${message}`)
+    throw new Error(`Failed to create Blackbox task: ${message}`)
+  }
+}
+
+/**
+ * Create a session using legacy tmux mode
+ */
+function createTmuxSession(
+  id: string,
+  name: string,
+  options: CreateSessionRequest
+): Promise<ManagedSession> {
   return new Promise((resolve, reject) => {
-    const id = randomUUID()
-    sessionCounter++
-    const name = options.name || `Claude ${sessionCounter}`
-    const tmuxSession = `vibecraft-${shortId()}`
+    const tmuxSession = `boxcraft-${shortId()}`
 
     // Validate cwd to prevent command injection
     let cwd: string
@@ -798,7 +903,6 @@ function createSession(options: CreateSessionRequest = {}): Promise<ManagedSessi
     const claudeCmd = claudeArgs.length > 0 ? `claude ${claudeArgs.join(' ')}` : 'claude'
 
     // Spawn tmux session with claude using execFile to prevent shell injection
-    // Arguments are passed as array, not interpolated into a shell string
     execFile('tmux', [
       'new-session',
       '-d',
@@ -823,7 +927,7 @@ function createSession(options: CreateSessionRequest = {}): Promise<ManagedSessi
       }
 
       managedSessions.set(id, session)
-      log(`Created session: ${name} (${id.slice(0, 8)}) -> tmux:${tmuxSession} cmd:'${claudeCmd}'`)
+      log(`Created tmux session: ${name} (${id.slice(0, 8)}) -> tmux:${tmuxSession} cmd:'${claudeCmd}'`)
 
       // Track git status for this session
       if (cwd) {
@@ -839,6 +943,203 @@ function createSession(options: CreateSessionRequest = {}): Promise<ManagedSessi
       resolve(session)
     })
   })
+}
+
+// ============================================================================
+// Blackbox Task Polling
+// ============================================================================
+
+/** Active task polling intervals */
+const taskPollingIntervals = new Map<string, ReturnType<typeof setInterval>>()
+
+/** Polling interval in ms */
+const TASK_POLL_INTERVAL = 3000
+
+/**
+ * Start polling for task status updates
+ */
+function startTaskPolling(sessionId: string, taskId: string): void {
+  // Don't start if already polling
+  if (taskPollingIntervals.has(sessionId)) {
+    return
+  }
+
+  const poll = async () => {
+    const api = getBlackboxAPI()
+    if (!api) {
+      stopTaskPolling(sessionId)
+      return
+    }
+
+    const session = managedSessions.get(sessionId)
+    if (!session || !session.taskId) {
+      stopTaskPolling(sessionId)
+      return
+    }
+
+    try {
+      const task = await api.getTask(taskId)
+      updateSessionFromTask(sessionId, task)
+
+      // Stop polling if task is complete
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'stopped') {
+        stopTaskPolling(sessionId)
+      }
+    } catch (error) {
+      log(`Error polling task ${taskId}: ${error}`)
+    }
+  }
+
+  // Poll immediately, then at interval
+  poll()
+  const interval = setInterval(poll, TASK_POLL_INTERVAL)
+  taskPollingIntervals.set(sessionId, interval)
+}
+
+/**
+ * Stop polling for a session
+ */
+function stopTaskPolling(sessionId: string): void {
+  const interval = taskPollingIntervals.get(sessionId)
+  if (interval) {
+    clearInterval(interval)
+    taskPollingIntervals.delete(sessionId)
+  }
+}
+
+/**
+ * Update session from Blackbox task data
+ */
+function updateSessionFromTask(sessionId: string, task: BlackboxTask): void {
+  const session = managedSessions.get(sessionId)
+  if (!session) return
+
+  const oldStatus = session.status
+  const newStatus = mapTaskStatusToSessionStatus(task.status)
+
+  session.status = newStatus
+  session.progress = task.progress
+  session.taskLogs = task.logs
+  session.lastActivity = Date.now()
+
+  if (task.prUrl) session.prUrl = task.prUrl
+  if (task.sandboxUrl) session.sandboxUrl = task.sandboxUrl
+  if (task.error) session.taskError = task.error
+  if (task.branchName) session.branch = task.branchName
+
+  // For multi-launch tasks, extract per-agent execution data
+  if (task.multiLaunch && task.agentExecutions && session.agent) {
+    const agentExecution = task.agentExecutions.find(
+      e => e.agent.toLowerCase() === session.agent!.toLowerCase()
+    )
+    if (agentExecution) {
+      // Update branch from agent-specific execution
+      if (agentExecution.branchName) {
+        session.branch = agentExecution.branchName
+      }
+      // Map agent execution status to session status
+      if (agentExecution.status === 'completed') {
+        session.status = 'idle'
+      } else if (agentExecution.status === 'running') {
+        session.status = 'working'
+      }
+    }
+  }
+
+  // Check for multi-launch winner from diffAnalysis
+  if (task.diffAnalysis?.bestAgent && session.agent) {
+    // Mark this session as winner if it matches the bestAgent
+    const isWinner = task.diffAnalysis.bestAgent.toLowerCase() === session.agent.toLowerCase()
+    if (session.isWinner !== isWinner) {
+      session.isWinner = isWinner
+      if (isWinner) {
+        log(`Task ${task.id} (${session.agent}) selected as winner by Blackbox analysis`)
+      }
+    }
+  }
+
+  // Log status changes
+  if (oldStatus !== newStatus) {
+    log(`Task ${task.id} status: ${oldStatus} -> ${newStatus} (progress: ${task.progress}%)`)
+  }
+
+  // Check if this task is part of a batch and if all tasks are complete
+  if (session.batchId && (task.status === 'completed' || task.status === 'failed')) {
+    checkBatchCompletion(session.batchId)
+  }
+
+  // Broadcast updates
+  broadcastSessions()
+  saveSessions()
+}
+
+/**
+ * Check if all tasks in a batch are complete and trigger judge if needed
+ */
+async function checkBatchCompletion(batchId: string): Promise<void> {
+  const batch = multiAgentBatches.get(batchId)
+  if (!batch || batch.status !== 'running') return
+
+  // Get all sessions in this batch
+  const batchSessions = batch.taskIds
+    .map(id => {
+      for (const [sessionId, session] of managedSessions) {
+        if (session.taskId === id) return session
+      }
+      return null
+    })
+    .filter((s): s is ManagedSession => s !== null)
+
+  // Check if all tasks are complete
+  const allComplete = batchSessions.every(s => 
+    s.status === 'idle' || s.status === 'offline' || s.status === 'error'
+  )
+
+  if (!allComplete) return
+
+  log(`Batch ${batchId}: All ${batchSessions.length} tasks complete`)
+
+  // Mark batch as complete (Blackbox handles multi-launch analysis automatically)
+  batch.status = 'completed'
+  saveBatches()
+  broadcastSessions()
+}
+
+/** Batches file path (same directory as sessions) */
+const BATCHES_FILE = resolve(expandHome('~/.boxcraft/data/batches.json'))
+
+/**
+ * Save batches to disk
+ */
+function saveBatches(): void {
+  try {
+    // Ensure directory exists
+    const dir = dirname(BATCHES_FILE)
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    const data = Array.from(multiAgentBatches.values())
+    writeFileSync(BATCHES_FILE, JSON.stringify(data, null, 2))
+  } catch (error) {
+    log(`Error saving batches: ${error}`)
+  }
+}
+
+/**
+ * Load batches from disk
+ */
+function loadBatches(): void {
+  try {
+    if (existsSync(BATCHES_FILE)) {
+      const data = JSON.parse(readFileSync(BATCHES_FILE, 'utf-8'))
+      for (const batch of data) {
+        multiAgentBatches.set(batch.id, batch)
+      }
+      log(`Loaded ${multiAgentBatches.size} batches`)
+    }
+  } catch (error) {
+    log(`Error loading batches: ${error}`)
+  }
 }
 
 /**
@@ -880,44 +1181,58 @@ function updateSession(id: string, updates: UpdateSessionRequest): ManagedSessio
 
 /**
  * Delete/kill a session
+ * Handles both Blackbox tasks and tmux sessions
  */
-function deleteSession(id: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const session = managedSessions.get(id)
-    if (!session) {
-      resolve(false)
-      return
-    }
+async function deleteSession(id: string): Promise<boolean> {
+  const session = managedSessions.get(id)
+  if (!session) {
+    return false
+  }
 
-    // Kill the tmux session using execFile to prevent shell injection
+  // Stop task polling if active
+  stopTaskPolling(id)
+
+  // Handle Blackbox task
+  if (session.taskId) {
+    const api = getBlackboxAPI()
+    if (api) {
+      try {
+        // Try to stop the task if it's still running
+        if (session.status === 'working' || session.status === 'waiting') {
+          await api.stopTask(session.taskId)
+          log(`Stopped Blackbox task: ${session.taskId}`)
+        }
+      } catch (error) {
+        log(`Warning: Failed to stop Blackbox task: ${error}`)
+      }
+    }
+  }
+
+  // Handle tmux session
+  if (session.tmuxSession) {
     try {
       validateTmuxSession(session.tmuxSession)
-    } catch {
-      log(`Invalid tmux session name: ${session.tmuxSession}`)
-      resolve(false)
-      return
+      await execFileAsync('tmux', ['kill-session', '-t', session.tmuxSession])
+    } catch (error) {
+      log(`Warning: Failed to kill tmux session: ${error}`)
     }
+  }
 
-    execFile('tmux', ['kill-session', '-t', session.tmuxSession], EXEC_OPTIONS, (error) => {
-      if (error) {
-        log(`Warning: Failed to kill tmux session: ${error.message}`)
-      }
+  // Clean up
+  managedSessions.delete(id)
+  gitStatusManager.untrack(id)
 
-      managedSessions.delete(id)
-      gitStatusManager.untrack(id)
-      // Clean up mapping
-      for (const [claudeId, managedId] of claudeToManagedMap) {
-        if (managedId === id) {
-          claudeToManagedMap.delete(claudeId)
-        }
-      }
+  // Clean up mapping
+  for (const [claudeId, managedId] of claudeToManagedMap) {
+    if (managedId === id) {
+      claudeToManagedMap.delete(claudeId)
+    }
+  }
 
-      log(`Deleted session: ${session.name} (${id.slice(0, 8)})`)
-      broadcastSessions()
-      saveSessions()
-      resolve(true)
-    })
-  })
+  log(`Deleted session: ${session.name} (${id.slice(0, 8)})`)
+  broadcastSessions()
+  saveSessions()
+  return true
 }
 
 /**
@@ -927,6 +1242,11 @@ async function sendPromptToSession(id: string, prompt: string): Promise<{ ok: bo
   const session = managedSessions.get(id)
   if (!session) {
     return { ok: false, error: 'Session not found' }
+  }
+
+  // Blackbox tasks don't support sending prompts this way
+  if (!session.tmuxSession) {
+    return { ok: false, error: 'Blackbox tasks do not support interactive prompts. Create a new task instead.' }
   }
 
   try {
@@ -960,6 +1280,9 @@ function checkSessionHealth(): void {
     let changed = false
 
     for (const session of managedSessions.values()) {
+      // Skip Blackbox tasks - they have their own status management
+      if (!session.tmuxSession) continue
+
       const isAlive = activeSessions.has(session.tmuxSession)
       const newStatus = isAlive ? (session.status === 'offline' ? 'idle' : session.status) : 'offline'
 
@@ -1523,6 +1846,19 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
       clients: clients.size,
       events: events.length,
       voiceEnabled: !!deepgramApiKey,
+      blackboxEnabled: isBlackboxEnabled(),
+    }))
+    return
+  }
+
+  // Blackbox agents and models
+  if (req.method === 'GET' && req.url === '/blackbox/agents') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      ok: true,
+      enabled: isBlackboxEnabled(),
+      agents: AGENT_MODELS,
+      defaults: DEFAULT_MODELS,
     }))
     return
   }
@@ -1752,6 +2088,148 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
   }
 
   // ============================================================================
+  // Multi-Agent Batch API
+  // ============================================================================
+
+  // POST /batches - Create a multi-agent batch (creates separate tasks for each agent)
+  // Note: Each agent gets its own task, and we track them together in a batch
+  // Winner detection comes from polling task.diffAnalysis.bestAgent when available
+  if (req.method === 'POST' && req.url === '/batches') {
+    collectRequestBody(req).then(async body => {
+      try {
+        const options = JSON.parse(body) as {
+          repoUrl: string
+          prompt: string
+          branch?: string
+          agents: Array<{ agent: BlackboxAgent; model?: string }>
+        }
+
+        if (!options.repoUrl || !options.prompt || !options.agents?.length) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Missing required fields' }))
+          return
+        }
+
+        if (options.agents.length < 2) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Multi-agent comparison requires at least 2 agents' }))
+          return
+        }
+
+        const api = getBlackboxAPI()
+        if (!api) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Blackbox API not available' }))
+          return
+        }
+
+        // Create batch to track all tasks
+        const batchId = randomUUID()
+        const batch: MultiAgentBatch = {
+          id: batchId,
+          taskIds: [],
+          prompt: options.prompt,
+          repoUrl: options.repoUrl,
+          branch: options.branch || 'main',
+          status: 'running',
+          createdAt: Date.now(),
+        }
+
+        // Extract repo name for session names
+        const repoMatch = options.repoUrl.match(/\/([^/]+?)(?:\.git)?$/)
+        const repoName = repoMatch ? repoMatch[1] : 'task'
+
+        // Create a separate task for each agent
+        const sessions: ManagedSession[] = []
+        for (const agentConfig of options.agents) {
+          try {
+            const task = await api.createTask({
+              repoUrl: options.repoUrl,
+              prompt: options.prompt,
+              selectedBranch: options.branch || 'main',
+              selectedAgent: agentConfig.agent,
+              selectedModel: agentConfig.model || DEFAULT_MODELS[agentConfig.agent],
+            })
+
+            const sessionId = randomUUID()
+            const session: ManagedSession = {
+              id: sessionId,
+              name: `${repoName} (${agentConfig.agent})`,
+              status: 'waiting',
+              createdAt: Date.now(),
+              lastActivity: Date.now(),
+              taskId: task.id,
+              repoUrl: options.repoUrl,
+              branch: options.branch || 'main',
+              agent: agentConfig.agent,
+              model: agentConfig.model || DEFAULT_MODELS[agentConfig.agent],
+              progress: 0,
+              batchId: batchId,
+            }
+
+            managedSessions.set(sessionId, session)
+            sessions.push(session)
+            batch.taskIds.push(task.id)
+
+            // Start polling for this task
+            startTaskPolling(sessionId, task.id)
+
+            log(`Created batch task: ${agentConfig.agent} -> ${task.id}`)
+          } catch (error) {
+            log(`Failed to create task for ${agentConfig.agent}: ${error}`)
+          }
+        }
+
+        if (sessions.length === 0) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ ok: false, error: 'Failed to create any tasks' }))
+          return
+        }
+
+        // Save batch
+        multiAgentBatches.set(batchId, batch)
+        saveBatches()
+        saveSessions()
+        broadcastSessions()
+
+        log(`Created batch ${batchId} with ${sessions.length} agents`)
+
+        res.writeHead(201, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, batch, sessions }))
+      } catch (e) {
+        log(`Failed to create batch: ${e}`)
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: (e as Error).message }))
+      }
+    }).catch(() => {
+      res.writeHead(413, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Request body too large' }))
+    })
+    return
+  }
+
+  // GET /batches - List all batches
+  if (req.method === 'GET' && req.url === '/batches') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, batches: Array.from(multiAgentBatches.values()) }))
+    return
+  }
+
+  // GET /batches/:id - Get batch details
+  const batchMatch = req.url?.match(/^\/batches\/([a-f0-9-]+)$/)
+  if (req.method === 'GET' && batchMatch) {
+    const batch = multiAgentBatches.get(batchMatch[1])
+    if (batch) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, batch }))
+    } else {
+      res.writeHead(404, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error: 'Batch not found' }))
+    }
+    return
+  }
+
+  // ============================================================================
   // Projects API (known directories for autocomplete)
   // ============================================================================
 
@@ -1871,6 +2349,27 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         return
       }
 
+      // Check if this is a tmux session
+      if (!session.tmuxSession) {
+        // For Blackbox tasks, try to stop the task
+        if (session.taskId) {
+          const api = getBlackboxAPI()
+          if (api) {
+            api.stopTask(session.taskId).then(() => {
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ ok: true }))
+            }).catch((err: Error) => {
+              res.writeHead(500, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ ok: false, error: err.message }))
+            })
+            return
+          }
+        }
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Session does not have a tmux session' }))
+        return
+      }
+
       try {
         validateTmuxSession(session.tmuxSession)
       } catch {
@@ -1879,7 +2378,7 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         return
       }
 
-      execFile('tmux', ['send-keys', '-t', session.tmuxSession, 'C-c'], EXEC_OPTIONS, (error) => {
+      execFile('tmux', ['send-keys', '-t', session.tmuxSession, 'C-c'], EXEC_OPTIONS, (error: Error | null) => {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         if (error) {
           res.end(JSON.stringify({ ok: false, error: error.message }))
@@ -1932,6 +2431,14 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         return
       }
 
+      // Check if this is a tmux session
+      if (!session.tmuxSession) {
+        // Blackbox tasks cannot be restarted this way
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'Blackbox tasks cannot be restarted. Create a new task instead.' }))
+        return
+      }
+
       // Validate inputs to prevent command injection
       try {
         validateTmuxSession(session.tmuxSession)
@@ -1950,16 +2457,18 @@ function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         return
       }
 
+      const tmuxSession = session.tmuxSession
+
       // Kill existing tmux session if it exists (ignore errors)
-      execFile('tmux', ['kill-session', '-t', session.tmuxSession], EXEC_OPTIONS, () => {
+      execFile('tmux', ['kill-session', '-t', tmuxSession], EXEC_OPTIONS, () => {
         // Respawn tmux session with claude using execFile
         execFile('tmux', [
           'new-session',
           '-d',
-          '-s', session.tmuxSession,
+          '-s', tmuxSession,
           '-c', cwd,
           `PATH=${EXEC_PATH} claude -c --permission-mode=bypassPermissions --dangerously-skip-permissions`
-        ], EXEC_OPTIONS, (error) => {
+        ], EXEC_OPTIONS, (error: Error | null) => {
           if (error) {
             res.writeHead(500, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ ok: false, error: `Failed to restart: ${error.message}` }))
@@ -2209,7 +2718,14 @@ function serveStaticFile(req: IncomingMessage, res: ServerResponse): void {
 // ============================================================================
 
 function main() {
-  log('Starting Vibecraft server...')
+  log('Starting Boxcraft server...')
+
+  // Check Blackbox API configuration
+  if (isBlackboxEnabled()) {
+    log('BLACKBOX_API_KEY configured - Blackbox API enabled')
+  } else {
+    log('BLACKBOX_API_KEY not set - using legacy tmux mode')
+  }
 
   // Load Deepgram API key for voice transcription
   deepgramApiKey = loadDeepgramKey()
@@ -2219,6 +2735,9 @@ function main() {
 
   // Load saved sessions (for persistence across restarts)
   loadSessions()
+
+  // Load saved batches (for multi-agent judge system)
+  loadBatches()
 
   // Load saved text tiles
   loadTiles()
@@ -2324,7 +2843,7 @@ function main() {
   httpServer.listen(PORT, () => {
     log(`Server running on port ${PORT}`)
     log(``)
-    log(`Open https://vibecraft.sh to view your workshop`)
+    log(`Open https://boxcraft.sh to view your workshop`)
     log(``)
     log(`Local API endpoints:`)
     log(`  WebSocket: ws://localhost:${PORT}`)

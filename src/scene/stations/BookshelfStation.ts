@@ -6,7 +6,7 @@ import * as THREE from 'three'
 
 export function addBookshelfDetails(group: THREE.Group): void {
   const shelfMaterial = new THREE.MeshStandardMaterial({
-    color: 0x3a5a6a,  // Blue-gray metallic
+    color: 0x1a1a1a,  // Dark gray for ASCII theme
     roughness: 0.6,
     metalness: 0.3,
   })

@@ -1,4 +1,4 @@
-# Vibecraft Design Principles
+# Boxcraft Design Principles
 
 Guidelines for creating a fluid, interactive experience.
 

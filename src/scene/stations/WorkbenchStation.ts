@@ -37,7 +37,7 @@ export function addWorkbenchDetails(group: THREE.Group): void {
 
   const hammerHandle = new THREE.Mesh(
     new THREE.CylinderGeometry(0.02, 0.025, 0.3, 8),
-    new THREE.MeshStandardMaterial({ color: 0x4a5a6a, metalness: 0.3 })  // Blue-gray
+    new THREE.MeshStandardMaterial({ color: 0x252525, metalness: 0.3 })  // Dark gray for ASCII theme
   )
   hammerHandle.position.set(0.35, 0.86, -0.08)
   hammerHandle.rotation.z = Math.PI / 2

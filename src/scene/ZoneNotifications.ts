@@ -48,7 +48,7 @@ interface ActiveNotification {
 
 const STYLE_COLORS: Record<NotificationStyle, string> = {
   success: '#4ade80',  // Green
-  info: '#60a5fa',     // Blue
+  info: '#cccccc',     // Light gray for ASCII theme
   warning: '#fbbf24',  // Amber
   error: '#f87171',    // Red
   muted: '#9ca3af',    // Gray

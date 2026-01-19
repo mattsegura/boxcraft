@@ -13,6 +13,14 @@ export interface SessionFlags {
   chrome?: boolean
 }
 
+export interface BlackboxOptions {
+  repoUrl: string
+  prompt: string
+  branch?: string
+  agent?: 'blackbox' | 'claude' | 'codex' | 'gemini'
+  model?: string
+}
+
 export interface CreateSessionResponse {
   ok: boolean
   error?: string
@@ -37,17 +45,30 @@ export function createSessionAPI(apiUrl: string) {
   return {
     /**
      * Create a new managed session
+     * Supports both local (tmux) and Blackbox cloud modes
      */
     async createSession(
       name?: string,
       cwd?: string,
-      flags?: SessionFlags
+      flags?: SessionFlags,
+      blackbox?: BlackboxOptions
     ): Promise<CreateSessionResponse> {
       try {
+        const body: Record<string, unknown> = { name, cwd, flags }
+
+        // Add Blackbox-specific fields if provided
+        if (blackbox) {
+          body.prompt = blackbox.prompt
+          body.repoUrl = blackbox.repoUrl
+          body.branch = blackbox.branch
+          body.agent = blackbox.agent
+          body.model = blackbox.model
+        }
+
         const response = await fetch(`${apiUrl}/sessions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, cwd, flags }),
+          body: JSON.stringify(body),
         })
         return await response.json()
       } catch (e) {

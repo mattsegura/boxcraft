@@ -1,5 +1,5 @@
 /**
- * Vibecraft Event Types
+ * Boxcraft Event Types
  *
  * These types define the contract between:
  * - Hook scripts (produce events)
@@ -261,7 +261,10 @@ export interface TaskToolInput {
 // ============================================================================
 
 /** Status of a managed Claude session */
-export type SessionStatus = 'idle' | 'working' | 'waiting' | 'offline'
+export type SessionStatus = 'idle' | 'working' | 'waiting' | 'attention' | 'offline' | 'error'
+
+/** Blackbox agent types */
+export type BlackboxAgent = 'blackbox' | 'claude' | 'codex' | 'gemini'
 
 /** A managed Claude session */
 export interface ManagedSession {
@@ -269,8 +272,8 @@ export interface ManagedSession {
   id: string
   /** User-friendly name ("Frontend", "Tests") */
   name: string
-  /** Actual tmux session name */
-  tmuxSession: string
+  /** Actual tmux session name (legacy, optional for Blackbox) */
+  tmuxSession?: string
   /** Current status */
   status: SessionStatus
   /** Claude Code session ID (from events, may differ from our ID) */
@@ -295,6 +298,56 @@ export interface ManagedSession {
     q: number
     r: number
   }
+
+  // ========== Blackbox API Fields ==========
+
+  /** Blackbox task ID (if using Blackbox API) */
+  taskId?: string
+  /** GitHub repository URL */
+  repoUrl?: string
+  /** Git branch */
+  branch?: string
+  /** Selected Blackbox agent */
+  agent?: BlackboxAgent
+  /** Selected model ID */
+  model?: string
+  /** Task progress (0-100) */
+  progress?: number
+  /** Pull request URL (when task completes) */
+  prUrl?: string
+  /** Live sandbox URL */
+  sandboxUrl?: string
+  /** Task error message */
+  taskError?: string
+  /** Task logs */
+  taskLogs?: string[]
+
+  // ========== Multi-Agent Judge Fields ==========
+
+  /** Batch ID for multi-agent tasks (groups related tasks) */
+  batchId?: string
+  /** Whether this task is the winner selected by the judge */
+  isWinner?: boolean
+}
+
+/** Multi-agent batch tracking (Blackbox handles analysis automatically) */
+export interface MultiAgentBatch {
+  /** Unique batch ID */
+  id: string
+  /** IDs of all tasks in this batch */
+  taskIds: string[]
+  /** Original prompt sent to all agents */
+  prompt: string
+  /** Repository URL */
+  repoUrl: string
+  /** Branch name */
+  branch: string
+  /** Batch status */
+  status: 'running' | 'completed' | 'failed'
+  /** Winning task ID (when completed, from Blackbox analysis) */
+  winnerId?: string
+  /** Creation timestamp */
+  createdAt: number
 }
 
 /** Git repository status */
@@ -351,12 +404,25 @@ export interface KnownProject {
 export interface CreateSessionRequest {
   name?: string
   cwd?: string
-  /** Claude command flags */
+  /** Claude command flags (legacy tmux mode) */
   flags?: {
     continue?: boolean        // -c (continue last conversation)
     skipPermissions?: boolean  // --dangerously-skip-permissions
     chrome?: boolean        // --chrome
   }
+
+  // ========== Blackbox API Fields ==========
+
+  /** Task prompt/instruction for the AI agent */
+  prompt?: string
+  /** GitHub repository URL (required for Blackbox) */
+  repoUrl?: string
+  /** Git branch to work on */
+  branch?: string
+  /** Blackbox agent to use */
+  agent?: BlackboxAgent
+  /** Model ID to use */
+  model?: string
 }
 
 /** Request to update a session */
@@ -432,7 +498,7 @@ export interface UpdateTextTileRequest {
 // Configuration
 // ============================================================================
 
-export interface VibecraftConfig {
+export interface BoxcraftConfig {
   /** WebSocket server port */
   serverPort: number
   /** Path to events JSONL file */
@@ -443,7 +509,7 @@ export interface VibecraftConfig {
   debug: boolean
 }
 
-export const DEFAULT_CONFIG: VibecraftConfig = {
+export const DEFAULT_CONFIG: BoxcraftConfig = {
   serverPort: 4003,
   eventsFile: './data/events.jsonl',
   maxEventsInMemory: 1000,

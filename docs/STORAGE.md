@@ -1,25 +1,25 @@
 # Storage Architecture
 
-This document explains where Vibecraft stores data and why.
+This document explains where Boxcraft stores data and why.
 
 ## Overview
 
-Vibecraft uses two storage locations:
+Boxcraft uses two storage locations:
 
 1. **localStorage** (browser) - User preferences and offline-capable content
-2. **Server files** (`~/.vibecraft/data/`) - Shared state and server-managed data
+2. **Server files** (`~/.boxcraft/data/`) - Shared state and server-managed data
 
 ## localStorage (Browser-Side)
 
 | Key | Data | Type |
 |-----|------|------|
-| `vibecraft-selected-session` | Currently selected session ID | UI state |
-| `vibecraft-volume` | Sound volume (0-100) | User preference |
-| `vibecraft-spatial-audio` | Spatial audio enabled (true/false) | User preference |
-| `vibecraft-grid-size` | World grid size (5-80 hex rings) | User preference |
-| `vibecraft-agent-port` | Custom server port override | User config |
-| `vibecraft-keybinds` | Custom keyboard bindings | User preference |
-| `vibecraft-hexart` | Painted hex data `[{q, r, color, height}]` | Creative content |
+| `boxcraft-selected-session` | Currently selected session ID | UI state |
+| `boxcraft-volume` | Sound volume (0-100) | User preference |
+| `boxcraft-spatial-audio` | Spatial audio enabled (true/false) | User preference |
+| `boxcraft-grid-size` | World grid size (5-80 hex rings) | User preference |
+| `boxcraft-agent-port` | Custom server port override | User config |
+| `boxcraft-keybinds` | Custom keyboard bindings | User preference |
+| `boxcraft-hexart` | Painted hex data `[{q, r, color, height}]` | Creative content |
 
 ### Pros
 - **Instant** - No network latency
@@ -34,7 +34,7 @@ Vibecraft uses two storage locations:
 
 ### Data Formats
 
-**Hex Art (`vibecraft-hexart`):**
+**Hex Art (`boxcraft-hexart`):**
 ```json
 [
   { "q": 0, "r": 0, "color": 2281966, "height": 0.5 },
@@ -42,14 +42,14 @@ Vibecraft uses two storage locations:
 ]
 ```
 
-**Keybinds (`vibecraft-keybinds`):**
+**Keybinds (`boxcraft-keybinds`):**
 ```json
 {
   "focus-toggle": { "key": "Tab", "alt": false, "ctrl": false, "shift": false }
 }
 ```
 
-## Server Files (`~/.vibecraft/data/`)
+## Server Files (`~/.boxcraft/data/`)
 
 | File | Data | Managed By |
 |------|------|------------|
@@ -65,7 +65,7 @@ Vibecraft uses two storage locations:
 - **Server can act** - Server manages tmux processes, broadcasts updates
 
 ### Cons
-- **Requires server** - Must have vibecraft server running
+- **Requires server** - Must have boxcraft server running
 - **Network latency** - Slightly slower than localStorage
 - **More code** - Needs API endpoints, WebSocket sync
 

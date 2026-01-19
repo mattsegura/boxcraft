@@ -4,23 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Watch and Manage Claude Code in 3D!" />
-    <meta name="theme-color" content="#0f172a" />
-    <title>Vibecraft - Watch and Manage Claude Code in 3D!</title>
+    <meta name="theme-color" content="#000000" />
+    <title>Boxcraft - Watch and Manage Claude Code in 3D!</title>
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
 
     <!-- Open Graph / Social -->
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Vibecraft" />
-    <meta property="og:title" content="Vibecraft - Watch and Manage Claude Code in 3D!" />
+    <meta property="og:site_name" content="Boxcraft" />
+    <meta property="og:title" content="Boxcraft - Watch and Manage Claude Code in 3D!" />
     <meta property="og:description" content="Watch and Manage Claude Code in 3D!" />
-    <meta property="og:image" content="https://vibecraft.sh/og-image.png" />
-    <meta property="og:url" content="https://vibecraft.sh" />
+    <meta property="og:image" content="https://boxcraft.sh/og-image.png" />
+    <meta property="og:url" content="https://boxcraft.sh" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Vibecraft - Watch and Manage Claude Code in 3D!" />
+    <meta name="twitter:title" content="Boxcraft - Watch and Manage Claude Code in 3D!" />
     <meta name="twitter:description" content="Watch and Manage Claude Code in 3D!" />
-    <meta name="twitter:image" content="https://vibecraft.sh/og-image.png" />
+    <meta name="twitter:image" content="https://boxcraft.sh/og-image.png" />
 
     <!-- Analytics -->
     <script src="https://cdn.amplitude.com/script/3b78e993d3c7ddad9fb9ae615cc094b6.js"></script>
@@ -39,9 +39,9 @@
             <span id="username" class="hud-user">...</span>
             <span id="status-text"></span>
             <span class="hud-sep">|</span>
-            <span id="token-counter" class="hud-tokens" title="Tokens used this session">⚡ 0 tok</span>
+            <span id="token-counter" class="hud-tokens" title="Tokens used this session">0 tok</span>
             <span class="hud-sep">|</span>
-            <button id="settings-btn" class="hud-btn" title="Settings">⚙️</button>
+            <button id="settings-btn" class="hud-btn" title="Settings">Settings</button>
             <!-- Debug: FPS counter (uncomment to enable)
             <span class="hud-sep">|</span>
             <span id="fps" class="hud-fps">-- FPS</span>
@@ -104,15 +104,19 @@
       <!-- Right: Activity Feed -->
       <div id="feed-panel">
         <div id="feed-header">
-          <h2>Vibecraft <span class="muted">(vibecraft.sh)</span></h2>
+          <h2>Boxcraft <span class="muted">(boxcraft.sh)</span></h2>
           <div class="feed-header-right">
             <span id="attention-badge" class="attention-badge hidden">0</span>
-            <button id="about-btn" class="feed-about-btn" title="About Vibecraft">?</button>
+            <button id="about-btn" class="feed-about-btn" title="About Boxcraft">?</button>
           </div>
         </div>
 
         <!-- Session Management -->
         <div id="sessions-panel">
+          <div id="sessions-header">
+            <span class="sessions-title">SESSIONS</span>
+            <button id="new-session-btn" title="Create new session">+ NEW</button>
+          </div>
           <div id="sessions-list">
             <div class="session-item all-sessions active" data-session="all">
               <div class="session-hotkey">0</div>
@@ -166,36 +170,153 @@
     <div id="new-session-modal">
       <div class="modal-content">
         <div class="modal-header">
-          <h3>New Zone</h3>
+          <h3>New Agent</h3>
         </div>
 
+        <!-- Mode Toggle -->
         <div class="modal-field">
-          <label for="session-cwd-input">Directory</label>
-          <input type="text" id="session-cwd-input" placeholder="e.g. /home/user/my-project" autocomplete="off" />
-          <div class="field-hint">Default: <code id="modal-default-cwd">~</code></div>
+          <div class="mode-toggle">
+            <button type="button" class="mode-btn active" data-mode="blackbox">Single Agent</button>
+            <button type="button" class="mode-btn" data-mode="multi">Multi-Agent</button>
+            <button type="button" class="mode-btn" data-mode="local">Local (tmux)</button>
+          </div>
         </div>
 
+        <!-- API Key Notice (shown when Blackbox not configured) -->
+        <div id="blackbox-api-notice" class="api-notice hidden">
+          <div class="notice-icon"></div>
+          <div class="notice-content">
+            <strong>API Key Required</strong>
+            <p>Set <code>BLACKBOX_API_KEY</code> environment variable to enable cloud agents.</p>
+            <p class="notice-hint">Get your API key from <a href="https://www.blackbox.ai" target="_blank">blackbox.ai</a></p>
+          </div>
+        </div>
+
+        <!-- Single Agent Mode Fields -->
+        <div id="blackbox-fields">
+          <div class="modal-field">
+            <label for="session-repo-input">GitHub Repository</label>
+            <input type="text" id="session-repo-input" placeholder="https://github.com/user/repo.git" autocomplete="off" />
+            <div class="field-hint">Required: Full GitHub repo URL</div>
+          </div>
+
+          <div class="modal-field">
+            <label for="session-prompt-input">Task Prompt</label>
+            <textarea id="session-prompt-input" placeholder="Describe what you want the agent to do..." rows="3"></textarea>
+            <div class="field-hint">Be specific about the changes you want</div>
+          </div>
+
+          <div class="modal-field">
+            <label for="session-branch-input">Branch</label>
+            <input type="text" id="session-branch-input" placeholder="main" autocomplete="off" />
+          </div>
+
+          <div class="modal-field">
+            <label>Agent & Model</label>
+            <div class="agent-model-row">
+              <select id="session-agent-select">
+                <option value="blackbox">Blackbox</option>
+                <option value="claude">Claude</option>
+                <option value="codex">Codex</option>
+                <option value="gemini">Gemini</option>
+              </select>
+              <select id="session-model-select">
+                <!-- Populated dynamically -->
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Multi-Agent Mode Fields -->
+        <div id="multi-agent-fields" class="hidden">
+          <div class="modal-field">
+            <label for="multi-repo-input">GitHub Repository</label>
+            <input type="text" id="multi-repo-input" placeholder="https://github.com/user/repo.git" autocomplete="off" />
+            <div class="field-hint">Required: Full GitHub repo URL</div>
+          </div>
+
+          <div class="modal-field">
+            <label for="multi-prompt-input">Task Prompt</label>
+            <textarea id="multi-prompt-input" placeholder="Describe what you want the agents to do..." rows="3"></textarea>
+            <div class="field-hint">Same prompt will be sent to all selected agents</div>
+          </div>
+
+          <div class="modal-field">
+            <label for="multi-branch-input">Branch</label>
+            <input type="text" id="multi-branch-input" placeholder="main" autocomplete="off" />
+          </div>
+
+          <div class="modal-field">
+            <label>Select Agents to Compare</label>
+            <div class="multi-agent-grid">
+              <label class="agent-checkbox">
+                <input type="checkbox" id="multi-agent-blackbox" checked />
+                <span class="agent-label">
+                  <span class="agent-icon">⚫</span>
+                  <span class="agent-name">Blackbox</span>
+                </span>
+              </label>
+              <label class="agent-checkbox">
+                <input type="checkbox" id="multi-agent-claude" checked />
+                <span class="agent-label">
+                  <span class="agent-icon">🟠</span>
+                  <span class="agent-name">Claude</span>
+                </span>
+              </label>
+              <label class="agent-checkbox">
+                <input type="checkbox" id="multi-agent-codex" />
+                <span class="agent-label">
+                  <span class="agent-icon">🟢</span>
+                  <span class="agent-name">Codex</span>
+                </span>
+              </label>
+              <label class="agent-checkbox">
+                <input type="checkbox" id="multi-agent-gemini" />
+                <span class="agent-label">
+                  <span class="agent-icon">🔵</span>
+                  <span class="agent-name">Gemini</span>
+                </span>
+              </label>
+            </div>
+            <div class="field-hint">Select 2+ agents to compare their solutions</div>
+          </div>
+
+        </div>
+
+        <!-- Local Mode Fields -->
+        <div id="local-fields" class="hidden">
+          <div class="modal-field">
+            <label for="session-cwd-input">Directory</label>
+            <div class="directory-input-row">
+              <input type="text" id="session-cwd-input" placeholder="Click to select or start typing..." autocomplete="off" />
+              <button type="button" id="browse-directory-btn" class="browse-btn" title="Browse folders">📁</button>
+            </div>
+            <div class="field-hint">Select a project folder or type to search recent projects</div>
+          </div>
+
+          <div class="modal-field">
+            <label>Options</label>
+            <div class="modal-checkboxes">
+              <label class="modal-checkbox">
+                <input type="checkbox" id="session-opt-continue" />
+                <span class="checkbox-label">Continue <code>-c</code></span>
+              </label>
+              <label class="modal-checkbox">
+                <input type="checkbox" id="session-opt-skip-perms" checked />
+                <span class="checkbox-label">Skip permissions <code>--dangerously-skip-permissions</code></span>
+              </label>
+              <label class="modal-checkbox">
+                <input type="checkbox" id="session-opt-chrome" />
+                <span class="checkbox-label">Chrome <code>--chrome</code></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Common Fields -->
         <div class="modal-field">
           <label for="session-name-input">Name</label>
-          <input type="text" id="session-name-input" placeholder="Auto-filled from directory..." autocomplete="off" />
-        </div>
-
-        <div class="modal-field">
-          <label>Options</label>
-          <div class="modal-checkboxes">
-            <label class="modal-checkbox">
-              <input type="checkbox" id="session-opt-continue" />
-              <span class="checkbox-label">Continue <code>-c</code></span>
-            </label>
-            <label class="modal-checkbox">
-              <input type="checkbox" id="session-opt-skip-perms" checked />
-              <span class="checkbox-label">Skip permissions <code>--dangerously-skip-permissions</code></span>
-            </label>
-            <label class="modal-checkbox">
-              <input type="checkbox" id="session-opt-chrome" />
-              <span class="checkbox-label">Chrome <code>--chrome</code></span>
-            </label>
-          </div>
+          <input type="text" id="session-name-input" placeholder="Auto-generated from repo/directory..." autocomplete="off" />
         </div>
 
         <div class="modal-actions">
@@ -256,7 +377,7 @@
             <input type="number" id="settings-port" value="4003" min="1" max="65535" />
             <span id="settings-port-status" class="port-status"></span>
           </div>
-          <div class="field-hint">Port where the Vibecraft agent is running. Changes require refresh.</div>
+          <div class="field-hint">Port where the Boxcraft agent is running. Changes require refresh.</div>
         </div>
 
         <div class="modal-field">
@@ -284,23 +405,23 @@
     <div id="about-modal">
       <div class="modal-content about-modal-content">
         <div class="modal-header">
-          <h3>Vibecraft</h3>
+          <h3>Boxcraft</h3>
         </div>
 
         <div class="about-description">
-          <p>Vibecraft is a A 3D visualization app for Claude Code.</p>
+          <p>Boxcraft is a A 3D visualization app for Claude Code.</p>
           <p>Watch and manage your claudes in real-time - now featuring hexagonal grids!</p>
-          <p class="about-subtitle">Vibecraft syncs with claude code instances running on your own machine. No files or
+          <p class="about-subtitle">Boxcraft syncs with claude code instances running on your own machine. No files or
           code are sent to the web server.</p>
         </div>
 
         <div class="about-section">
           <div class="about-section-title">Commands</div>
           <div class="about-commands">
-            <div class="about-cmd"><code>npx vibecraft</code><span>Start server</span></div>
-            <div class="about-cmd"><code>npx vibecraft doctor</code><span>Diagnose issues</span></div>
-            <div class="about-cmd"><code>npx vibecraft setup</code><span>Reinstall hooks</span></div>
-            <div class="about-cmd"><code>npx vibecraft uninstall</code><span>Remove hooks</span></div>
+            <div class="about-cmd"><code>npx boxcraft</code><span>Start server</span></div>
+            <div class="about-cmd"><code>npx boxcraft doctor</code><span>Diagnose issues</span></div>
+            <div class="about-cmd"><code>npx boxcraft setup</code><span>Reinstall hooks</span></div>
+            <div class="about-cmd"><code>npx boxcraft uninstall</code><span>Remove hooks</span></div>
           </div>
         </div>
 
@@ -450,21 +571,21 @@
     <!-- Not Connected Overlay -->
     <div id="not-connected-overlay">
       <div class="not-connected-content">
-        <h2>Vibecraft!</h2>
+        <h2>Boxcraft!</h2>
         <p class="not-connected-description">
-          Vibecraft is a 3D app to watch and manage Claude Code instances.
+          Boxcraft is a 3D app to watch and manage Claude Code instances.
         </p>
         <p class="not-connected-privacy">
-          Vibecraft syncs with CC instances running on your local machine. Vibecraft is an interface - no files or code
+          Boxcraft syncs with CC instances running on your local machine. Boxcraft is an interface - no files or code
           are sent to this server.
         </p>
         <div class="not-connected-setup">
           <p class="not-connected-setup-label">Get started:</p>
-          <div class="not-connected-code">npx vibecraft setup && npx vibecraft</div>
+          <div class="not-connected-code">npx boxcraft setup && npx boxcraft</div>
         </div>
         <div class="not-connected-actions">
-          <button class="not-connected-btn not-connected-btn-retry" id="retry-connection">↻ Reconnect</button>
-          <button class="not-connected-btn not-connected-btn-explore" id="explore-offline">👀 Explore</button>
+          <button class="not-connected-btn not-connected-btn-retry" id="retry-connection">Reconnect</button>
+          <button class="not-connected-btn not-connected-btn-explore" id="explore-offline">Explore</button>
         </div>
       </div>
     </div>
