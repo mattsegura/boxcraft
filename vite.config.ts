@@ -32,5 +32,49 @@ export default defineConfig({
   build: {
     target: 'esnext',
     sourcemap: true,
+    // Enable minification and compression
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true, // Remove console.logs in production
+        drop_debugger: true,
+      },
+    },
+    cssMinify: true,
+    cssCodeSplit: true, // Split CSS per chunk for better caching
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split Three.js into its own chunk (largest dependency)
+          'three': ['three'],
+          // Split Tone.js audio library
+          'tone': ['tone'],
+          // Group UI components together
+          'ui': [
+            './src/ui/FeedManager',
+            './src/ui/VoiceControl',
+            './src/ui/Toast',
+            './src/ui/TimelineManager',
+            './src/ui/KeyboardShortcuts',
+            './src/ui/KeybindSettings',
+          ],
+          // Group modals (lazy loaded)
+          'modals': [
+            './src/ui/QuestionModal',
+            './src/ui/PermissionModal',
+            './src/ui/ZoneInfoModal',
+            './src/ui/ZoneCommandModal',
+            './src/ui/TextLabelModal',
+          ],
+          // Group scene/entities
+          'scene': [
+            './src/scene/WorkshopScene',
+            './src/entities/AsciiBot',
+            './src/entities/SubagentManager',
+          ],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
   },
 })

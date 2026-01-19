@@ -4,6 +4,7 @@
 /* ║  A retro-futuristic terminal aesthetic with neon white glow              ║ */
 /* ╚══════════════════════════════════════════════════════════════════════════╝ */
 
+/* Fonts with display=swap for better performance */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
 
