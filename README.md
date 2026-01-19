@@ -2,19 +2,6 @@
 
 ![Boxcraft Screenshot](public/og-image.png)
 
-Manage Claude Code in style!
-
-**[Try it instantly at boxcraft.sh](https://boxcraft.sh)** — still connects to your local Claude Code instances!
-
-**New:**
-- **Blackbox AI Integration** — Run cloud AI agents (Claude, GPT, Gemini) without local setup!
-- **Spatial Audio** — Claude behind you? Claude on your left? No claublem!
-- **Animations** — What's Claude up to? Watch him! ◕ ‿ ◕
-
-Boxcraft uses your own local Claude Code instances — no files or prompts are shared.
-
-![Three.js](https://img.shields.io/badge/Three.js-black?logo=threedotjs) ![TypeScript](https://img.shields.io/badge/TypeScript-blue?logo=typescript&logoColor=white) ![npm](https://img.shields.io/npm/v/boxcraft)
-
 ## How It Works
 
 Boxcraft visualizes AI coding agents in real-time as a 3D workshop. When an agent uses tools (Read, Edit, Bash, etc.), a character moves to corresponding workstations.
