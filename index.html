@@ -10,6 +10,10 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
 
+    <!-- Preconnect to external domains for faster loading -->
+    <link rel="preconnect" href="https://cdn.amplitude.com" crossorigin />
+    <link rel="dns-prefetch" href="https://cdn.amplitude.com" />
+
     <!-- Open Graph / Social -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Boxcraft" />
@@ -22,11 +26,50 @@
     <meta name="twitter:description" content="Watch and Manage Claude Code in 3D!" />
     <meta name="twitter:image" content="https://boxcraft.sh/og-image.png" />
 
-    <!-- Analytics -->
-    <script src="https://cdn.amplitude.com/script/3b78e993d3c7ddad9fb9ae615cc094b6.js"></script>
-    <script>window.amplitude.init('3b78e993d3c7ddad9fb9ae615cc094b6', {"fetchRemoteConfig":true,"autocapture":{"attribution":true,"fileDownloads":true,"formInteractions":true,"pageViews":true,"sessions":true,"elementInteractions":true,"networkTracking":true,"webVitals":true,"frustrationInteractions":true}});</script>
+    <!-- Analytics (deferred) -->
+    <script defer src="https://cdn.amplitude.com/script/3b78e993d3c7ddad9fb9ae615cc094b6.js" onload="window.amplitude && window.amplitude.init('3b78e993d3c7ddad9fb9ae615cc094b6', {fetchRemoteConfig:true,autocapture:{attribution:true,fileDownloads:true,formInteractions:true,pageViews:true,sessions:true,elementInteractions:true,networkTracking:true,webVitals:true,frustrationInteractions:true}})"></script>
+    <style>
+      /* Critical CSS for loading indicator */
+      #loading-screen {
+        position: fixed;
+        inset: 0;
+        background: #000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      #loading-screen.hidden {
+        display: none;
+      }
+      .loading-spinner {
+        width: 48px;
+        height: 48px;
+        border: 3px solid rgba(255, 255, 255, 0.1);
+        border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      .loading-text {
+        margin-top: 24px;
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.7);
+      }
+    </style>
   </head>
   <body>
+    <!-- Loading screen -->
+    <div id="loading-screen">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Loading Boxcraft...</div>
+    </div>
+
     <div id="app">
       <!-- Left: 3D Scene -->
       <div id="scene-panel">

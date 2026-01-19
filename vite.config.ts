@@ -16,6 +16,10 @@ export default defineConfig({
     // Inject default port into frontend at build time
     __BOXCRAFT_DEFAULT_PORT__: serverPort,
   },
+  optimizeDeps: {
+    // Pre-bundle these dependencies for faster loading
+    include: ['three', 'tone'],
+  },
   server: {
     port: clientPort,
     proxy: {
@@ -31,6 +35,21 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
-    sourcemap: true,
+    sourcemap: false, // Disable sourcemaps in production for faster loading
+    minify: 'esbuild',
+    cssMinify: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split Three.js into separate chunk (largest dependency)
+          'three': ['three'],
+          // Split Tone.js audio library into separate chunk
+          'tone': ['tone'],
+          // Split vendor dependencies
+          'vendor': ['@deepgram/sdk'],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
   },
 })

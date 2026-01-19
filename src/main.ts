@@ -2939,6 +2939,12 @@ function init() {
   // Start rendering
   state.scene.start()
 
+  // Hide loading screen once scene is ready
+  const loadingScreen = document.getElementById('loading-screen')
+  if (loadingScreen) {
+    loadingScreen.classList.add('hidden')
+  }
+
   // Initialize attention system
   state.attentionSystem = new AttentionSystem({
     onQueueChange: () => renderManagedSessions(),
