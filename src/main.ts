@@ -62,6 +62,7 @@ import { drawMode } from './ui/DrawMode'
 import { setupTextLabelModal, showTextLabelModal } from './ui/TextLabelModal'
 import { showToast } from './ui/Toast'
 import { createSessionAPI, type SessionAPI } from './api'
+import { logPerformanceMetrics } from './utils/PerformanceMonitor'
 
 // ============================================================================
 // Configuration
@@ -3392,6 +3393,20 @@ function init() {
 
   // Check for updates (non-blocking)
   checkForUpdates()
+
+  // Hide loading screen once everything is initialized
+  const loadingScreen = document.getElementById('loading-screen')
+  if (loadingScreen) {
+    loadingScreen.style.opacity = '0'
+    setTimeout(() => {
+      loadingScreen.remove()
+    }, 300)
+  }
+
+  // Log performance metrics in development
+  if (import.meta.env.DEV) {
+    logPerformanceMetrics()
+  }
 
   console.log('Boxcraft initialized (multi-session enabled)')
 }
